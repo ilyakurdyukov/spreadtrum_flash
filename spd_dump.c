@@ -1,5 +1,5 @@
 /*
-// Spreadtrum SC6531E feature phone firmware dumper for Linux.
+// Spreadtrum SC6531EFM feature phone firmware dumper for Linux.
 //
 // sudo modprobe ftdi_sio
 // echo 1782 4d00 | sudo tee /sys/bus/usb-serial/drivers/generic/new_id
@@ -137,7 +137,7 @@ static unsigned spd_checksum(unsigned crc, const void *src, int len, int final) 
 		crc += s[0] << 8 | s[1]; s += 2;
 		len -= 2;
 	}
-	if (len == 1)	crc += *s;
+	if (len == 1) crc += *s;
 	if (final) {
 		crc = (crc >> 16) + (crc & 0xffff);
 		crc += crc >> 16;

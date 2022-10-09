@@ -23,10 +23,11 @@ $ echo 1782 4d00 | sudo tee /sys/bus/usb-serial/drivers/generic/new_id
 
 1. [SPD Flash Tool source code](https://spflashtools.com/category/source)
 2. [RDA memory dumper](https://github.com/ihewitt/ivrtrack/blob/main/util/dump.c)
-3. [FDL1/FDL2 loader in Python](https://github.com/fxsheep/sharkalaka)
-4. [Unisoc flasher for Linux](https://github.com/Mani-Sadhasivam/uwpflash)
+3. [sharkalaka - FDL1/FDL2 loader in Python](https://github.com/fxsheep/sharkalaka)
+4. [uwpflash - Unisoc flasher for Linux](https://github.com/Mani-Sadhasivam/uwpflash)
 5. [Opus Spreadtrum (protocol explanation)](https://chronovir.us/2021/12/18/Opus-Spreadtrum/)
-6. [Tool from the author of Opus Spreadtrum (Python)](https://gitlab.com/suborg/uniflash)
+6. [uniflash - from the author of Opus Spreadtrum (in Python)](https://gitlab.com/suborg/uniflash)
+7. [sprdproto - another tool (in C)](https://github.com/kagaimiq/sprdproto)
 
 * I only found "Opus Spreadtrum" after I wrote this tool using information from other source code. So now there is another dump tool, but written in C.
 
