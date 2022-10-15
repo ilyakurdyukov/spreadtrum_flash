@@ -1,5 +1,5 @@
 /*
-// Spreadtrum SC6531EFM feature phone firmware dumper for Linux.
+// Spreadtrum SC6531E feature phone firmware dumper for Linux.
 //
 // sudo modprobe ftdi_sio
 // echo 1782 4d00 | sudo tee /sys/bus/usb-serial/drivers/generic/new_id
@@ -55,7 +55,7 @@ typedef struct {
 static spdio_t* spdio_init(int serial, int flags) {
 	uint8_t *p; spdio_t *io;
 
-	p = (uint8_t*)malloc(sizeof(spdio_t) + RECV_BUF_LEN + (4 + 0xffff + 2) * 3 + 2);
+	p = (uint8_t*)malloc(sizeof(spdio_t) + RECV_BUF_LEN + (4 + 0x10000 + 2) * 3 + 2);
 	io = (spdio_t*)p; p += sizeof(spdio_t);
 	if (!p) ERR_EXIT("malloc failed\n");
 	io->flags = flags;
@@ -63,7 +63,7 @@ static spdio_t* spdio_init(int serial, int flags) {
 	io->recv_len = 0;
 	io->recv_pos = 0;
 	io->recv_buf = p; p += RECV_BUF_LEN;
-	io->raw_buf = p; p += 4 + 0xffff + 2;
+	io->raw_buf = p; p += 4 + 0x10000 + 2;
 	io->enc_buf = p;
 	io->verbose = 0;
 	io->timeout = 1000;
@@ -130,18 +130,23 @@ static unsigned spd_crc16(unsigned crc, const void *src, unsigned len) {
 	return crc;
 }
 
+#define CHK_FIXZERO 1
+#define CHK_ORIG 2
+
 static unsigned spd_checksum(unsigned crc, const void *src, int len, int final) {
 	uint8_t *s = (uint8_t*)src;
 
 	while (len > 1) {
-		crc += s[0] << 8 | s[1]; s += 2;
+		crc += s[1] << 8 | s[0]; s += 2;
 		len -= 2;
 	}
-	if (len == 1) crc += *s;
+	if (len) crc += *s;
 	if (final) {
 		crc = (crc >> 16) + (crc & 0xffff);
 		crc += crc >> 16;
 		crc = ~crc & 0xffff;
+		if (len < final)
+			crc = crc >> 8 | (crc & 0xff) << 8;
 	}
 	return crc;
 }
@@ -185,12 +190,14 @@ static void encode_msg(spdio_t *io, int type, const void *data, size_t len) {
 	WRITE16_BE(p, type); p += 2;
 	WRITE16_BE(p, len); p += 2;
 	memcpy(p, data, len); p += len;
-	if (len & 1) *p++ = 0;
 
 	len = p - p0;
 	if (io->flags & FLAGS_CRC16)
 		chk = spd_crc16(0, p0, len);
-	else chk = spd_checksum(0, p0, len, 1);
+	else {
+		// if (len & 1) *p++ = 0;
+		chk = spd_checksum(0, p0, len, CHK_FIXZERO);
+	}
 	WRITE16_BE(p, chk); p += 2;
 
 	io->raw_len = len = p - p0;
@@ -259,9 +266,12 @@ static int recv_msg(spdio_t *io) {
 		}
 		a = io->recv_buf[pos++];
 		if (io->flags & FLAGS_TRANSCODE) {
+			if (esc && a != (HDLC_HEADER ^ 0x20) &&
+					a != (HDLC_ESCAPE ^ 0x20))
+				ERR_EXIT("unexpected escaped byte (0x%02x)\n", a);
 			if (a == HDLC_HEADER) {
-				esc = 0;
 				if (!head_found) head_found = 1;
+				else if (!nread) continue;
 				else if (nread < plen)
 					ERR_EXIT("recieved message too short\n");
 				else break;
@@ -305,7 +315,7 @@ static int recv_msg(spdio_t *io) {
 	if (io->flags & FLAGS_CRC16)
 		chk = spd_crc16(0, io->raw_buf, plen - 2);
 	else
-		chk = spd_checksum(0, io->raw_buf, plen - 2, 1);
+		chk = spd_checksum(0, io->raw_buf, plen - 2, CHK_ORIG);
 
 	a = READ16_BE(io->raw_buf + plen - 2);
 	if (a != chk)
@@ -450,8 +460,15 @@ static unsigned dump_mem(spdio_t *io,
 
 int main(int argc, char **argv) {
 	int serial; spdio_t *io; int ret, i;
+	int wait = 20;
 
-	serial = open("/dev/ttyUSB0", O_RDWR | O_NOCTTY | O_SYNC);
+	for (;;) {
+		serial = open("/dev/ttyUSB0", O_RDWR | O_NOCTTY | O_SYNC);
+		if (serial >= 0 || !wait) break;
+		usleep(500000);
+		wait--;
+	}
+
 	if (serial < 0)
 		ERR_EXIT("open(ttyUSB) failed\n");
 
@@ -515,11 +532,11 @@ int main(int argc, char **argv) {
 
 	/* FDL2 (chk = sum) */
 
-	dump_flash(io, 0x80000003, 0, 4 << 20, "dump.bin");
+	dump_flash(io, 0x80000003, 0, 4 << 20, "flash.bin");
 
 	// 03c00000 - these bits are ignored
-	//dump_mem(io, 0x10000000, 4 << 20, "dump.bin"); // same as dump_flash(0x80000003)
-	//dump_mem(io, 0x14000000, 4 << 20, "extra.bin"); // FDL2 and some memory
+	//dump_mem(io, 0x10000000, 4 << 20, "flash.bin"); // same as dump_flash(0x80000003)
+	//dump_mem(io, 0x14000000, 4 << 20, "pnor1.bin");
 
 	spdio_free(io);
 	close(serial);
