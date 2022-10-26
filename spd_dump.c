@@ -36,6 +36,27 @@ static void print_mem(FILE *f, uint8_t *buf, size_t len) {
 	}
 }
 
+static void print_string(FILE *f, uint8_t *buf, size_t n) {
+	size_t i; int a, b = 0;
+	fprintf(f, "\"");
+	for (i = 0; i < n; i++) {
+		a = buf[i]; b = 0;
+		switch (a) {
+		case '"': case '\\': b = a; break;
+		case 0: b = '0'; break;
+		case '\b': b = 'b'; break;
+		case '\t': b = 't'; break;
+		case '\n': b = 'n'; break;
+		case '\f': b = 'f'; break;
+		case '\r': b = 'r'; break;
+		}
+		if (b) fprintf(f, "\\%c", b);
+		else if (a >= 32 && a < 127) fprintf(f, "%c", a);
+		else fprintf(f, "\\x%02x", a);
+	}
+	fprintf(f, "\"\n");
+}
+
 #define ERR_EXIT(...) \
 	do { fprintf(stderr, __VA_ARGS__); exit(1); } while (0)
 
@@ -153,14 +174,14 @@ static unsigned spd_checksum(unsigned crc, const void *src, int len, int final) 
 
 #define WRITE16_BE(p, a) do { \
 	((uint8_t*)(p))[0] = (a) >> 8; \
-	((uint8_t*)(p))[1] = (a); \
+	((uint8_t*)(p))[1] = (uint8_t)(a); \
 } while (0)
 
 #define WRITE32_BE(p, a) do { \
 	((uint8_t*)(p))[0] = (a) >> 24; \
 	((uint8_t*)(p))[1] = (a) >> 16; \
 	((uint8_t*)(p))[2] = (a) >> 8; \
-	((uint8_t*)(p))[3] = (a); \
+	((uint8_t*)(p))[3] = (uint8_t)(a); \
 } while (0)
 
 #define READ16_BE(p) ( \
@@ -405,8 +426,8 @@ static unsigned dump_flash(spdio_t *io,
 		encode_msg(io, BSL_CMD_READ_FLASH, data, 4 * 3);
 		send_msg(io);
 		ret = recv_msg(io);
-		if (recv_type(io) != BSL_REP_READ_FLASH) {
-			DBG_LOG("unexpected response\n");
+		if ((ret = recv_type(io)) != BSL_REP_READ_FLASH) {
+			DBG_LOG("unexpected response (0x%04x)\n", ret);
 			break;
 		}
 		nread = READ16_BE(io->raw_buf + 2);
@@ -414,7 +435,7 @@ static unsigned dump_flash(spdio_t *io,
 			ERR_EXIT("unexpected length\n");
 		if (fwrite(io->raw_buf + 4, 1, nread, fo) != nread) 
 			ERR_EXIT("fwrite(dump) failed\n");
-		off += n;
+		off += nread;
 		if (n != nread) break;
 	}
 	DBG_LOG("dump_flash: 0x%08x+0x%x, target: 0x%x, read: 0x%x\n", addr, start, len, off - start);
@@ -441,8 +462,8 @@ static unsigned dump_mem(spdio_t *io,
 		encode_msg(io, BSL_CMD_READ_FLASH, data, 4 * 3);
 		send_msg(io);
 		ret = recv_msg(io);
-		if (recv_type(io) != BSL_REP_READ_FLASH) {
-			DBG_LOG("unexpected response\n");
+		if ((ret = recv_type(io)) != BSL_REP_READ_FLASH) {
+			DBG_LOG("unexpected response (0x%04x)\n", ret);
 			break;
 		}
 		nread = READ16_BE(io->raw_buf + 2);
@@ -450,7 +471,7 @@ static unsigned dump_mem(spdio_t *io,
 			ERR_EXIT("unexpected length\n");
 		if (fwrite(io->raw_buf + 4, 1, nread, fo) != nread) 
 			ERR_EXIT("fwrite(dump) failed\n");
-		off += n;
+		off += nread;
 		if (n != nread) break;
 	}
 	DBG_LOG("dump_mem: 0x%08x, target: 0x%x, read: 0x%x\n", start, len, off - start);
@@ -460,15 +481,30 @@ static unsigned dump_mem(spdio_t *io,
 
 int main(int argc, char **argv) {
 	int serial; spdio_t *io; int ret, i;
-	int wait = 20;
+	int wait = 30 * 2;
+	const char *tty = "/dev/ttyUSB0";
+	int verbose = 2, fdl_loaded = 0;
 
-	for (;;) {
-		serial = open("/dev/ttyUSB0", O_RDWR | O_NOCTTY | O_SYNC);
-		if (serial >= 0 || !wait) break;
-		usleep(500000);
-		wait--;
+	while (argc > 1) {
+		if (!strcmp(argv[1], "--tty")) {
+			if (argc <= 2) ERR_EXIT("bad option\n");
+			tty = argv[2];
+			argc -= 2; argv += 2;
+		} else if (!strcmp(argv[1], "--verbose")) {
+			if (argc <= 2) ERR_EXIT("bad option\n");
+			verbose = atoi(argv[2]);
+			argc -= 2; argv += 2;
+		} else if (argv[1][0] == '-') {
+			ERR_EXIT("unknown option\n");
+		} else break;
 	}
 
+	for (i = 0; i < wait; i++) {
+		serial = open(tty, O_RDWR | O_NOCTTY | O_SYNC);
+		if (serial >= 0) break;
+		if (!i) DBG_LOG("Waiting for connection (%ds)\n", wait / 2);
+		usleep(500000);
+	}
 	if (serial < 0)
 		ERR_EXIT("open(ttyUSB) failed\n");
 
@@ -476,67 +512,108 @@ int main(int argc, char **argv) {
 	// fcntl(serial, F_SETFL, FNDELAY);
 	tcflush(serial, TCIOFLUSH);
 
-	io = spdio_init(serial, FLAGS_CRC16 | FLAGS_TRANSCODE);
+	io = spdio_init(serial, FLAGS_TRANSCODE);
+	io->verbose = verbose;
 
-	io->verbose = 2;
+	while (argc > 1) {
+		if (!strcmp(argv[1], "fdl")) {
+			const char *fn; uint32_t addr;
+			if (argc <= 3) ERR_EXIT("bad command\n");
 
-	/* Bootloader (chk = crc16) */
+			fn = argv[2];
+			addr = strtol(argv[3], NULL, 0);
 
-	encode_msg(io, BSL_CMD_CHECK_BAUD, NULL, 4);
-	send_msg(io);
-	ret = recv_msg(io);
-	if (recv_type(io) != BSL_REP_VER)
-		ERR_EXIT("ver expected\n");
+			if (!fdl_loaded) {
+				/* Bootloader (chk = crc16) */
+				io->flags |= FLAGS_CRC16;
 
-	encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
-	send_msg(io);
-	ret = recv_msg(io);
-	if (recv_type(io) != BSL_REP_ACK)
-		ERR_EXIT("ack expected\n");
+				encode_msg(io, BSL_CMD_CHECK_BAUD, NULL, 1);
+				send_msg(io);
+				ret = recv_msg(io);
+				if (recv_type(io) != BSL_REP_VER)
+					ERR_EXIT("ver expected\n");
 
-	send_file(io, "nor_fdl1.bin", 0x40004000);
+				DBG_LOG("BSL_REP_VER: ");
+				print_string(stderr, io->raw_buf + 4, READ16_BE(io->raw_buf + 2));
 
-	encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
-	send_msg(io);
-	ret = recv_msg(io);
-	if (recv_type(io) != BSL_REP_ACK)
-		ERR_EXIT("ack expected\n");
+				encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
+				send_msg(io);
+				ret = recv_msg(io);
+				if (recv_type(io) != BSL_REP_ACK)
+					ERR_EXIT("ack expected\n");
 
-	/* FDL1 (chk = sum) */
+				send_file(io, fn, addr);
 
-	io->flags &= ~FLAGS_CRC16;
-	encode_msg(io, BSL_CMD_CHECK_BAUD, NULL, 4);
-	for (i = 0; i < 10; i++) {
-		if (io->verbose >= 1)
-			DBG_LOG("checkbaud %d\n", i + 1);
-		send_msg(io);
-		ret = recv_msg(io);
-		if (ret) break;
+				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
+				send_msg(io);
+				ret = recv_msg(io);
+				if (recv_type(io) != BSL_REP_ACK)
+					ERR_EXIT("ack expected\n");
+
+				/* FDL1 (chk = sum) */
+				io->flags &= ~FLAGS_CRC16;
+
+				encode_msg(io, BSL_CMD_CHECK_BAUD, NULL, 4);
+				for (i = 0; i < 10; i++) {
+					if (io->verbose >= 1)
+						DBG_LOG("checkbaud %d\n", i + 1);
+					send_msg(io);
+					ret = recv_msg(io);
+					if (ret) break;
+				}
+				if (recv_type(io) != BSL_REP_VER)
+					ERR_EXIT("ver expected\n");
+
+				DBG_LOG("BSL_REP_VER: ");
+				print_string(stderr, io->raw_buf + 4, READ16_BE(io->raw_buf + 2));
+
+				encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
+				send_msg(io);
+				ret = recv_msg(io);
+				if (recv_type(io) != BSL_REP_ACK)
+					ERR_EXIT("ack expected\n");
+
+			} else {
+
+				send_file(io, fn, addr);
+
+				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
+				send_msg(io);
+				ret = recv_msg(io);
+				if (recv_type(io) != BSL_REP_ACK)
+					ERR_EXIT("ack expected\n");
+			}
+
+			fdl_loaded++;
+			argc -= 3; argv += 3;
+		} else if (!strcmp(argv[1], "read_flash")) {
+			const char *fn; uint32_t addr, offset, size;
+			if (argc <= 5) ERR_EXIT("bad command\n");
+
+			addr = strtol(argv[2], NULL, 0);
+			offset = strtol(argv[3], NULL, 0);
+			size = strtol(argv[4], NULL, 0);
+			fn = argv[5];
+			dump_flash(io, addr, offset, size, fn);
+			argc -= 5; argv += 5;
+		} else if (!strcmp(argv[1], "read_mem")) {
+			const char *fn; uint32_t addr, size;
+			if (argc <= 4) ERR_EXIT("bad command\n");
+
+			addr = strtol(argv[2], NULL, 0);
+			size = strtol(argv[3], NULL, 0);
+			fn = argv[4];
+			dump_mem(io, addr, size, fn);
+			argc -= 4; argv += 4;
+
+		} else if (!strcmp(argv[1], "verbose")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			io->verbose = atoi(argv[2]);
+			argc -= 2; argv += 2;
+		} else {
+			ERR_EXIT("unknown command\n");
+		}
 	}
-	if (recv_type(io) != BSL_REP_VER)
-		ERR_EXIT("ver expected\n");
-
-	encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
-	send_msg(io);
-	ret = recv_msg(io);
-	if (recv_type(io) != BSL_REP_ACK)
-		ERR_EXIT("ack expected\n");
-
-	send_file(io, "nor_fdl.bin", 0x14000000);
-
-	encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
-	send_msg(io);
-	ret = recv_msg(io);
-	if (recv_type(io) != BSL_REP_ACK)
-		ERR_EXIT("ack expected\n");
-
-	/* FDL2 (chk = sum) */
-
-	dump_flash(io, 0x80000003, 0, 4 << 20, "flash.bin");
-
-	// 03c00000 - these bits are ignored
-	//dump_mem(io, 0x10000000, 4 << 20, "flash.bin"); // same as dump_flash(0x80000003)
-	//dump_mem(io, 0x14000000, 4 << 20, "pnor1.bin");
 
 	spdio_free(io);
 	close(serial);
