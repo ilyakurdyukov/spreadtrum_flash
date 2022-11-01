@@ -1,9 +1,9 @@
 /*
-// Spreadtrum SC6531E feature phone firmware dumper for Linux.
+// Spreadtrum SC6531E/SC6531DA firmware dumper for Linux.
 //
 // sudo modprobe ftdi_sio
 // echo 1782 4d00 | sudo tee /sys/bus/usb-serial/drivers/generic/new_id
-// make && sudo ./spd_dump
+// make && sudo ./spd_dump [options] commands...
 */
 
 #define _GNU_SOURCE 1
@@ -36,7 +36,7 @@ static void print_mem(FILE *f, uint8_t *buf, size_t len) {
 	}
 }
 
-static void print_string(FILE *f, uint8_t *buf, size_t n) {
+static void print_string(FILE *f, const uint8_t *buf, size_t n) {
 	size_t i; int a, b = 0;
 	fprintf(f, "\"");
 	for (i = 0; i < n; i++) {
@@ -399,6 +399,7 @@ static void send_file(spdio_t *io, const char *fn, uint32_t start_addr) {
 		if (recv_type(io) != BSL_REP_ACK)
 			ERR_EXIT("ack expected\n");
 	}
+	free(mem);
 
 	encode_msg(io, BSL_CMD_END_DATA, NULL, 0);
 	send_msg(io);
@@ -610,6 +611,7 @@ int main(int argc, char **argv) {
 			if (argc <= 2) ERR_EXIT("bad command\n");
 			io->verbose = atoi(argv[2]);
 			argc -= 2; argv += 2;
+
 		} else {
 			ERR_EXIT("unknown command\n");
 		}
