@@ -2,6 +2,8 @@
 
 Currently only for feature phones based on the SC6531E/SC6531DA chipset. You can edit the code to work with other Spreadtrum chipsets.
 
+* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, USE AT YOUR OWN RISK!
+
 ### Instructions
 
 1. Find any firmware using this search request: `site:androiddatahost.com <chipset> FSPD`.
