@@ -22,7 +22,7 @@ SC6531E: `sudo ./spd_dump fdl nor_fdl1.bin 0x40004000 fdl nor_fdl.bin 0x14000000
 
 SC6531DA: `sudo ./spd_dump fdl nor_fdl.bin 0x34000000 read_flash 0x80000003 0 0x400000 flash.bin`.
 
-* Using a boot cable may work the same as the boot key, but I haven't tested this.
+* Instead of finding the boot key (sometimes there's no boot key, as on smart watches with only the power key), it's more convenient to use a boot cable with shorted 4th and 5th pins. This is the same as for OTG adapters, so you can combine an OTG adapter with an AM to AM USB cable.
 * If you want to run the tool again then you need to reconnect (also includes battery removal) the phone to the USB.
 
 ### Useful links
@@ -35,6 +35,7 @@ SC6531DA: `sudo ./spd_dump fdl nor_fdl.bin 0x34000000 read_flash 0x80000003 0 0x
 6. [uniflash - from the author of Opus Spreadtrum (in Python)](https://gitlab.com/suborg/uniflash)
 7. [sprdproto - another tool (in C)](https://github.com/kagaimiq/sprdproto)
 8. [bzpwork - tool for packing/unpacking Spreadtrum firmware (in C)](https://github.com/ilyazx/bzpwork)
+9. [unisoc_dloader - another tool (in C)](https://github.com/amitv87/unisoc_dloader)
 
 * I only found "Opus Spreadtrum" after I wrote this tool using information from other source code. So now there is another dump tool, but written in C.
 
