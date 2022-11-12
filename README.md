@@ -24,6 +24,7 @@ SC6531DA: `sudo ./spd_dump fdl nor_fdl.bin 0x34000000 read_flash 0x80000003 0 0x
 
 * Instead of finding the boot key (sometimes there's no boot key, as on smart watches with only the power key), it's more convenient to use a boot cable with shorted 4th and 5th pins. This is the same as for OTG adapters, so you can combine an OTG adapter with an AM to AM USB cable.
 * If you want to run the tool again then you need to reconnect (also includes battery removal) the phone to the USB.
+* An example of a custom FDL1 is [here](custom_fdl) (you can read the bootloader with it).
 
 ### Useful links
 
