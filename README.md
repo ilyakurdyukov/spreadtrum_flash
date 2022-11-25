@@ -26,6 +26,19 @@ SC6531DA: `sudo ./spd_dump fdl nor_fdl.bin 0x34000000 read_flash 0x80000003 0 0x
 * If you want to run the tool again then you need to reconnect (also includes battery removal) the phone to the USB.
 * An example of a custom FDL1 is [here](custom_fdl) (you can read the bootloader with it).
 
+#### Using the tool without sudo
+
+If you create `/etc/udev/rules.d/80-spd-mtk.rules` with these lines:
+```
+# Spreadtrum
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="1782", ATTRS{idProduct}=="4d00", MODE="0666", TAG+="uaccess"
+# MediaTek
+SUBSYSTEMS=="usb", ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="0003", MODE="0666", TAG+="uaccess"
+```
+...then you can run `spd_dump` without root privileges.
+
+* As you can see this file for both Spreadtrum and MediaTek chipsets.
+
 ### Useful links
 
 1. [SPD Flash Tool source code](https://spflashtools.com/category/source)
@@ -39,5 +52,5 @@ SC6531DA: `sudo ./spd_dump fdl nor_fdl.bin 0x34000000 read_flash 0x80000003 0 0x
 9. [unisoc_dloader - another tool (in C)](https://github.com/amitv87/unisoc_dloader)
 
 * I only found "Opus Spreadtrum" after I wrote this tool using information from other source code. So now there is another dump tool, but written in C.
-
+* Also I have the [tool](https://github.com/ilyakurdyukov/mediatek_flash) for MediaTek chipsets.
 

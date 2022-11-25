@@ -280,6 +280,8 @@ static int recv_msg(spdio_t *io) {
 				fds.events = POLLIN;
 				a = poll(&fds, 1, io->timeout);
 				if (a < 0) ERR_EXIT("poll failed, ret = %d\n", a);
+				if (fds.revents & POLLHUP)
+					ERR_EXIT("connection closed\n");
 				if (!a) break;
 			}
 			pos = 0;
@@ -503,7 +505,7 @@ int main(int argc, char **argv) {
 			argc -= 2; argv += 2;
 		} else if (!strcmp(argv[1], "--wait")) {
 			if (argc <= 2) ERR_EXIT("bad option\n");
-			wait = atoi(argv[2]) * 4;
+			wait = atoi(argv[2]) * REOPEN_FREQ;
 			argc -= 2; argv += 2;
 		} else if (!strcmp(argv[1], "--verbose")) {
 			if (argc <= 2) ERR_EXIT("bad option\n");
