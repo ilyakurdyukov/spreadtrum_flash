@@ -21,9 +21,13 @@
 #include <stdint.h>
 #include <string.h>
 
+#if USE_LIBUSB
+#include <libusb-1.0/libusb.h>
+#else
 #include <termios.h>
 #include <fcntl.h>
 #include <poll.h>
+#endif
 #include <unistd.h>
 
 #include "spd_cmd.h"
@@ -74,35 +78,66 @@ static void print_string(FILE *f, const uint8_t *buf, size_t n) {
 
 typedef struct {
 	uint8_t *raw_buf, *enc_buf, *recv_buf;
-	int flags, serial, recv_len, recv_pos;
+#if USE_LIBUSB
+	libusb_device_handle *dev_handle;
+	int endp_in, endp_out;
+#else
+	int serial;
+#endif
+	int flags, recv_len, recv_pos;
 	int raw_len, enc_len, verbose, timeout;
 } spdio_t;
 
 #define FLAGS_CRC16 1
 #define FLAGS_TRANSCODE 2
 
-static spdio_t* spdio_init(int serial, int flags) {
-	uint8_t *p; spdio_t *io;
+#if USE_LIBUSB
+static void find_endpoints(libusb_device_handle *dev_handle, int result[2]) {
+	int endp_in = -1, endp_out = -1;
+	//struct libusb_device_descriptor desc;
+	struct libusb_config_descriptor *config;
+	libusb_device *device = libusb_get_device(dev_handle);
+	if (!device)
+		ERR_EXIT("libusb_get_device failed\n");
+	//if (libusb_get_device_descriptor(device, &desc) < 0)
+	//	ERR_EXIT("libusb_get_device_descriptor failed");
+	if (libusb_get_config_descriptor(device, 0, &config) < 0)
+		ERR_EXIT("libusb_get_config_descriptor failed\n");
+	if (config->bNumInterfaces != 1)
+		ERR_EXIT("config->bNumInterfaces != 1\n");
+	{
+		const struct libusb_interface *interface;
+		const struct libusb_interface_descriptor *interface_desc;
+		int i;
 
-	p = (uint8_t*)malloc(sizeof(spdio_t) + RECV_BUF_LEN + (4 + 0x10000 + 2) * 3 + 2);
-	io = (spdio_t*)p; p += sizeof(spdio_t);
-	if (!p) ERR_EXIT("malloc failed\n");
-	io->flags = flags;
-	io->serial = serial;
-	io->recv_len = 0;
-	io->recv_pos = 0;
-	io->recv_buf = p; p += RECV_BUF_LEN;
-	io->raw_buf = p; p += 4 + 0x10000 + 2;
-	io->enc_buf = p;
-	io->verbose = 0;
-	io->timeout = 1000;
-	return io;
+		interface = config->interface + 0;
+		if (interface->num_altsetting != 1)
+			ERR_EXIT("interface->num_altsetting != 1\n");
+		interface_desc = interface->altsetting + 0;
+
+		for (i = 0; i < interface_desc->bNumEndpoints; i++) {
+			const struct libusb_endpoint_descriptor *endpoint;
+			endpoint = interface_desc->endpoint + i;
+			if (endpoint->bmAttributes == 2) {
+				int addr = endpoint->bEndpointAddress;
+				if (addr & 0x80) {
+					if (endp_in >= 0) ERR_EXIT("more than one endp_in\n");
+					endp_in = addr;
+				} else {
+					if (endp_out >= 0) ERR_EXIT("more than one endp_out\n");
+					endp_out = addr;
+				}
+			}
+		}
+	}
+	if (endp_in < 0) ERR_EXIT("endp_in not found\n");
+	if (endp_out < 0) ERR_EXIT("endp_out not found\n");
+	libusb_free_config_descriptor(config);
+
+	result[0] = endp_in;
+	result[1] = endp_out;
 }
-
-static void spdio_free(spdio_t* io) {
-	if (io) free(io);
-}
-
+#else
 static void init_serial(int serial) {
 	struct termios tty = { 0 };
 
@@ -120,6 +155,54 @@ static void init_serial(int serial) {
 
 	tcflush(serial, TCIFLUSH);
 	tcsetattr(serial, TCSANOW, &tty);
+}
+#endif
+
+#if USE_LIBUSB
+static spdio_t* spdio_init(libusb_device_handle *dev_handle, int flags) {
+#else
+static spdio_t* spdio_init(int serial, int flags) {
+#endif
+	uint8_t *p; spdio_t *io;
+
+#if USE_LIBUSB
+	int endpoints[2];
+	find_endpoints(dev_handle, endpoints);
+#else
+	init_serial(serial);
+	// fcntl(serial, F_SETFL, FNDELAY);
+	tcflush(serial, TCIOFLUSH);
+#endif
+
+	p = (uint8_t*)malloc(sizeof(spdio_t) + RECV_BUF_LEN + (4 + 0x10000 + 2) * 3 + 2);
+	io = (spdio_t*)p; p += sizeof(spdio_t);
+	if (!p) ERR_EXIT("malloc failed\n");
+	io->flags = flags;
+#if USE_LIBUSB
+	io->dev_handle = dev_handle;
+	io->endp_in = endpoints[0];
+	io->endp_out = endpoints[1];
+#else
+	io->serial = serial;
+#endif
+	io->recv_len = 0;
+	io->recv_pos = 0;
+	io->recv_buf = p; p += RECV_BUF_LEN;
+	io->raw_buf = p; p += 4 + 0x10000 + 2;
+	io->enc_buf = p;
+	io->verbose = 0;
+	io->timeout = 1000;
+	return io;
+}
+
+static void spdio_free(spdio_t* io) {
+	if (!io) return;
+#if USE_LIBUSB
+	libusb_close(io->dev_handle);
+#else
+	close(io->serial);
+#endif
+	free(io);
 }
 
 static int spd_transcode(uint8_t *dst, uint8_t *src, int len) {
@@ -257,12 +340,19 @@ static int send_msg(spdio_t *io) {
 		} else DBG_LOG("send: unknown message\n");
 	}
 
+#if USE_LIBUSB
+	if (libusb_bulk_transfer(io->dev_handle, io->endp_out, io->enc_buf, io->enc_len, &ret, io->timeout) < 0)
+		ERR_EXIT("libusb_bulk_transfer failed\n");
+#else
 	ret = write(io->serial, io->enc_buf, io->enc_len);
+#endif
 	if (ret != io->enc_len)
 		ERR_EXIT("write(message) failed\n");
 
+#if !USE_LIBUSB
 	tcdrain(io->serial);
 	// usleep(1000);
+#endif
 	return ret;
 }
 
@@ -274,6 +364,15 @@ static int recv_msg(spdio_t *io) {
 	pos = io->recv_pos;
 	for (;;) {
 		if (pos >= len) {
+#if USE_LIBUSB
+			int err = libusb_bulk_transfer(io->dev_handle, io->endp_in, io->recv_buf, RECV_BUF_LEN, &len, io->timeout);
+			if (err == LIBUSB_ERROR_PIPE)
+				ERR_EXIT("connection closed\n");
+			else if (err == LIBUSB_ERROR_TIMEOUT) break;
+			else if (err < 0) {
+				ERR_EXIT("libusb_bulk_transfer failed : %s\n", libusb_error_name(err));
+			}
+#else
 			if (io->timeout >= 0) {
 				struct pollfd fds = { 0 };
 				fds.fd = io->serial;
@@ -284,8 +383,8 @@ static int recv_msg(spdio_t *io) {
 					ERR_EXIT("connection closed\n");
 				if (!a) break;
 			}
-			pos = 0;
 			len = read(io->serial, io->recv_buf, RECV_BUF_LEN);
+#endif
 			if (len < 0)
 				ERR_EXIT("read(message) failed, ret = %d\n", len);
 
@@ -293,6 +392,7 @@ static int recv_msg(spdio_t *io) {
 				DBG_LOG("recv (%d):\n", len);
 				print_mem(stderr, io->recv_buf, len);
 			}
+			pos = 0;
 			if (!len) break;
 		}
 		a = io->recv_buf[pos++];
@@ -493,10 +593,21 @@ static unsigned dump_mem(spdio_t *io,
 #define REOPEN_FREQ 2
 
 int main(int argc, char **argv) {
-	int serial; spdio_t *io; int ret, i;
+#if USE_LIBUSB
+	libusb_device_handle *device;
+#else
+	int serial;
+#endif
+	spdio_t *io; int ret, i;
 	int wait = 30 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
 	int verbose = 0, fdl_loaded = 0;
+
+#if USE_LIBUSB
+	ret = libusb_init(NULL);
+	if (ret < 0)
+		ERR_EXIT("libusb_init failed: %s\n", libusb_error_name(ret));
+#endif
 
 	while (argc > 1) {
 		if (!strcmp(argv[1], "--tty")) {
@@ -517,19 +628,27 @@ int main(int argc, char **argv) {
 	}
 
 	for (i = 0; ; i++) {
+#if USE_LIBUSB
+		device = libusb_open_device_with_vid_pid(NULL, 0x1782, 0x4d00);
+		if (device) break;
+		if (i >= wait)
+			ERR_EXIT("libusb_open_device failed\n");
+#else
 		serial = open(tty, O_RDWR | O_NOCTTY | O_SYNC);
 		if (serial >= 0) break;
 		if (i >= wait)
 			ERR_EXIT("open(ttyUSB) failed\n");
+#endif
 		if (!i) DBG_LOG("Waiting for connection (%ds)\n", wait / REOPEN_FREQ);
 		usleep(1000000 / REOPEN_FREQ);
 	}
 
-	init_serial(serial);
-	// fcntl(serial, F_SETFL, FNDELAY);
-	tcflush(serial, TCIOFLUSH);
-
-	io = spdio_init(serial, FLAGS_TRANSCODE);
+#if USE_LIBUSB
+	io = spdio_init(device, 0);
+#else
+	io = spdio_init(serial, 0);
+#endif
+	io->flags |= FLAGS_TRANSCODE;
 	io->verbose = verbose;
 
 	while (argc > 1) {
@@ -634,6 +753,8 @@ int main(int argc, char **argv) {
 	}
 
 	spdio_free(io);
-	close(serial);
+#if USE_LIBUSB
+	libusb_exit(NULL);
+#endif
 	return 0;
 }
