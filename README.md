@@ -39,6 +39,14 @@ SUBSYSTEMS=="usb", ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="0003", MODE="0666
 
 * As you can see this file for both Spreadtrum and MediaTek chipsets.
 
+#### Using libusb to connect
+
+You can build the tool with `libusb` method: `make LIBUSB=1`
+
+For Linux users, this method doesn't require the `ftdi_sio` kernel module, but `libusb/libusb-dev` packages must be installed.
+
+For Windows users, this method is the only one available, should also require drivers (the same as needed for flashing tools).
+
 ### Useful links
 
 1. [SPD Flash Tool source code](https://spflashtools.com/category/source)
