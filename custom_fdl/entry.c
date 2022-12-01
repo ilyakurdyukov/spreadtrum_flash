@@ -15,7 +15,7 @@ void entry_main() {
 	{
 		uint32_t a = MEM4(0x205003fc);
 		if (a == 0) chip_id = 1;	// SC6531E
-		else if (a == 0x65310001) chip_id = 2;	// SC6531DA
+		else if ((a ^ 0x65300000) >> 17 == 0) chip_id = 2;	// SC6531DA
 	}
 #endif
 
