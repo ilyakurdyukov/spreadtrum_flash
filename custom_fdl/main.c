@@ -77,7 +77,7 @@ static int read_flash(uint8_t *pkt) {
 	if (len == 12) offs = READ32_BE(pkt + 12);
 	if (offs != -1) {
 		if (addr == 0x80000003)
-			addr = (chip_id == 2 ? 0x30000000 : 0x10000000) + offs;
+			addr = (_chip == 2 ? 0x30000000 : 0x10000000) + offs;
 	}
 
 	pkt = dl_send_buf();

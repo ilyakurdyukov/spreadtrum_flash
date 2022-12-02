@@ -152,7 +152,7 @@ static void usb_recv(uint32_t ep, uint32_t *dst, uint32_t len) {
 	do {
 #if CHIP == 0
 		fifo = (uint32_t*)0x9008000c;
-		if (chip_id == 2)
+		if (_chip == 2)
 			fifo += (uint32_t*)0x90080020 - (uint32_t*)0x9008000c;
 
 		if (ep == 1) {

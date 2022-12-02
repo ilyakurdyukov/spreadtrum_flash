@@ -61,9 +61,9 @@ static inline uint32_t swap_be32(uint32_t v) { return v; }
 #endif
 
 #if CHIP == 0
-extern int chip_id;
+extern int _chip;
 #else
-#define chip_id CHIP
+#define _chip CHIP
 #endif
 
 void dl_main(void);
