@@ -19,7 +19,7 @@ static void sc6531da_init_power(void) {
 	MEM4(0x82000004) = 0x55000;
 }
 
-static init_sc6531da(void) {
+static void init_sc6531da(void) {
 	sc6531da_init_first();
 	sc6531da_init_power();
 }
