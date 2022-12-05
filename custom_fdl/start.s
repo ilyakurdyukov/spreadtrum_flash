@@ -27,12 +27,10 @@
 
 CODE32_FN _start
 	mrc	p15, #0, r0, c1, c0, #0 // Read Control Register
-.if 1
 	bic	r0, #5
+.if 1
 	bic	r0, #0x1000
 .else // faster
-	bic	r0, #1
-	orr	r0, #4
 	orr	r0, #0x1000
 .endif
 	mcr	p15, #0, r0, c1, c0, #0 // Write Control Register

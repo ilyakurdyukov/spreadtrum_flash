@@ -1,9 +1,9 @@
-static inline uint32_t get_psram(void) {
+static inline uint32_t sc6531e_get_psram(void) {
 	// check remap
 	return (MEM4(0x205000e0) & 1) << 28 | 0x04000000;
 }
 
-static int smc_get_id(uint32_t base, uint32_t ps) {
+static int sc6531e_smc_get_id(uint32_t base, uint32_t ps) {
 	uint32_t a;
 
 	MEM4(base + 0x88) = 3;
@@ -17,7 +17,7 @@ static int smc_get_id(uint32_t base, uint32_t ps) {
 	return a;
 }
 
-static void smc_save_id(uint32_t base, uint32_t ps, uint32_t id) {
+static void sc6531e_smc_save_id(uint32_t base, uint32_t ps, uint32_t id) {
 	uint32_t a, b; 
 
 	MEM4(0x20500168) = 0;
@@ -29,6 +29,8 @@ static void smc_save_id(uint32_t base, uint32_t ps, uint32_t id) {
 	MEM4(base + 0x84) |= 1;
 	MEM4(0x20500168) = id << 8 | a >> 2 | b;
 }
+
+#define sc6531e_smc_config_t smc_config_t
 
 typedef struct {
 	uint32_t x04_18, x20_24, x45_48, x58_68;
@@ -49,7 +51,7 @@ typedef struct {
 }
 
 // SRAM memory controller
-static void init_smc() {
+static void sc6531e_init_smc() {
 	uint32_t id, a;
 
 	const smc_config_t *conf;
@@ -84,8 +86,8 @@ static void init_smc() {
 	MEM4(base + 0x00) &= ~0x100;
 	DELAY(100)
 
-	ps = get_psram();
-	id = smc_get_id(base, ps);
+	ps = sc6531e_get_psram();
+	id = sc6531e_smc_get_id(base, ps);
 	if (id == 6) {
 		MEM4(base + 0xa0) = 0x5a5a;
 		MEM4(base + 0x80) |= 1;
@@ -95,7 +97,7 @@ static void init_smc() {
 		MEM4(base + 0x80) &= ~1;
 		conf = &conf_0d;
 	}	else for (;;);
-	smc_save_id(base, ps, id);
+	sc6531e_smc_save_id(base, ps, id);
 
 	a = MEM4(base + 0x00) & ~0x333378c0;
 	MEM4(base + 0x00) = a | conf->x04_18;
@@ -137,18 +139,20 @@ static void init_smc() {
 	MEM4(base + 0x94) = a | conf->x58_68;
 
 	MEM4(base + 0x84) &= ~1;
-	a = get_psram();
+	a = sc6531e_get_psram();
 	*(volatile uint8_t*)a = conf->x6c;
 	DELAY(100)
 	MEM4(base + 0x84) |= 1;
 }
+#undef SMC_CONFIG
+#undef smc_config_t
 
 static void sc6531e_init_first() {
 	uint32_t a;
 	// CPU freq
 	a = MEM4(0x8b00004c);
 	MEM4(0x8b00004c) = a & ~4;
-	MEM4(0x8b00004c) = a | 3;
+	MEM4(0x8b00004c) = a | 3;	// 208 MHz
 	DELAY(100)
 	MEM4(0x8d20002c) = (MEM4(0x8d20002c) & ~7) | 2;
 	MEM4(0x8d200030) = (MEM4(0x8d200030) & ~(3 << 8)) | (1 << 8);
@@ -167,7 +171,7 @@ static void sc6531e_init_power() {
 
 static void init_sc6531e(void) {
 	sc6531e_init_first();
-	init_smc();
+	sc6531e_init_smc();
 	sc6531e_init_power();
 }
 
