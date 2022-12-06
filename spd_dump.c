@@ -94,6 +94,7 @@ typedef struct {
 #if USE_LIBUSB
 static void find_endpoints(libusb_device_handle *dev_handle, int result[2]) {
 	int endp_in = -1, endp_out = -1;
+	int i, j, k, err;
 	//struct libusb_device_descriptor desc;
 	struct libusb_config_descriptor *config;
 	libusb_device *device = libusb_get_device(dev_handle);
@@ -103,29 +104,30 @@ static void find_endpoints(libusb_device_handle *dev_handle, int result[2]) {
 	//	ERR_EXIT("libusb_get_device_descriptor failed");
 	if (libusb_get_config_descriptor(device, 0, &config) < 0)
 		ERR_EXIT("libusb_get_config_descriptor failed\n");
-	if (config->bNumInterfaces != 1)
-		ERR_EXIT("config->bNumInterfaces != 1\n");
-	{
+
+	for (k = 0; k < config->bNumInterfaces; k++) {
 		const struct libusb_interface *interface;
-		const struct libusb_interface_descriptor *interface_desc;
-		int i;
-
-		interface = config->interface + 0;
-		if (interface->num_altsetting != 1)
-			ERR_EXIT("interface->num_altsetting != 1\n");
-		interface_desc = interface->altsetting + 0;
-
-		for (i = 0; i < interface_desc->bNumEndpoints; i++) {
-			const struct libusb_endpoint_descriptor *endpoint;
-			endpoint = interface_desc->endpoint + i;
-			if (endpoint->bmAttributes == 2) {
-				int addr = endpoint->bEndpointAddress;
-				if (addr & 0x80) {
-					if (endp_in >= 0) ERR_EXIT("more than one endp_in\n");
-					endp_in = addr;
-				} else {
-					if (endp_out >= 0) ERR_EXIT("more than one endp_out\n");
-					endp_out = addr;
+		interface = config->interface + k;
+		for (j = 0; j < interface->num_altsetting; j++) {
+			const struct libusb_interface_descriptor *interface_desc;
+			interface_desc = interface->altsetting + j;
+			for (i = 0; i < interface_desc->bNumEndpoints; i++) {
+				const struct libusb_endpoint_descriptor *endpoint;
+				endpoint = interface_desc->endpoint + i;
+				if (endpoint->bmAttributes == 2) {
+					int addr = endpoint->bEndpointAddress;
+					err = 0;
+					if (addr & 0x80) {
+						if (endp_in >= 0) ERR_EXIT("more than one endp_in\n");
+						endp_in = addr;
+						err = libusb_claim_interface(dev_handle, k);
+					} else {
+						if (endp_out >= 0) ERR_EXIT("more than one endp_out\n");
+						endp_out = addr;
+						err = libusb_claim_interface(dev_handle, k);
+					}
+					if (err < 0)
+						ERR_EXIT("libusb_claim_interface failed : %s\n", libusb_error_name(err));
 				}
 			}
 		}
@@ -133,6 +135,8 @@ static void find_endpoints(libusb_device_handle *dev_handle, int result[2]) {
 	if (endp_in < 0) ERR_EXIT("endp_in not found\n");
 	if (endp_out < 0) ERR_EXIT("endp_out not found\n");
 	libusb_free_config_descriptor(config);
+
+	//DBG_LOG("USB endp_in=%02x, endp_out=%02x\n", endp_in, endp_out);
 
 	result[0] = endp_in;
 	result[1] = endp_out;
@@ -341,13 +345,17 @@ static int send_msg(spdio_t *io) {
 	}
 
 #if USE_LIBUSB
-	if (libusb_bulk_transfer(io->dev_handle, io->endp_out, io->enc_buf, io->enc_len, &ret, io->timeout) < 0)
-		ERR_EXIT("libusb_bulk_transfer failed\n");
+	{
+		int err = libusb_bulk_transfer(io->dev_handle,
+				io->endp_out, io->enc_buf, io->enc_len, &ret, io->timeout);
+		if (err < 0)
+			ERR_EXIT("usb_send failed : %s\n", libusb_error_name(err));
+	}
 #else
 	ret = write(io->serial, io->enc_buf, io->enc_len);
 #endif
 	if (ret != io->enc_len)
-		ERR_EXIT("write(message) failed\n");
+		ERR_EXIT("usb_send failed (%d / %d)\n", ret, io->enc_len);
 
 #if !USE_LIBUSB
 	tcdrain(io->serial);
@@ -366,7 +374,7 @@ static int recv_msg(spdio_t *io) {
 		if (pos >= len) {
 #if USE_LIBUSB
 			int err = libusb_bulk_transfer(io->dev_handle, io->endp_in, io->recv_buf, RECV_BUF_LEN, &len, io->timeout);
-			if (err == LIBUSB_ERROR_PIPE)
+			if (err == LIBUSB_ERROR_NO_DEVICE)
 				ERR_EXIT("connection closed\n");
 			else if (err == LIBUSB_ERROR_TIMEOUT) break;
 			else if (err < 0) {
