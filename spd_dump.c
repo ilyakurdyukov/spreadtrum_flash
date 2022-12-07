@@ -136,16 +136,17 @@ static void find_endpoints(libusb_device_handle *dev_handle, int result[2]) {
 			}
 		}
 		if (claim) {
+			i = interface_desc->bInterfaceNumber;
 #if LIBUSB_DETACH
-			err = libusb_kernel_driver_active(dev_handle, k);
+			err = libusb_kernel_driver_active(dev_handle, i);
 			if (err > 0) {
 				DBG_LOG("kernel driver is active, trying to detach\n");
-				err = libusb_detach_kernel_driver(dev_handle, k);
+				err = libusb_detach_kernel_driver(dev_handle, i);
 				if (err < 0)
 					ERR_EXIT("libusb_detach_kernel_driver failed : %s\n", libusb_error_name(err));
 			}
 #endif
-			err = libusb_claim_interface(dev_handle, k);
+			err = libusb_claim_interface(dev_handle, i);
 			if (err < 0)
 				ERR_EXIT("libusb_claim_interface failed : %s\n", libusb_error_name(err));
 			break;
