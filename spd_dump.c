@@ -21,6 +21,11 @@
 #include <stdint.h>
 #include <string.h>
 
+#ifndef LIBUSB_DETACH
+/* detach the device from crappy kernel drivers */
+#define LIBUSB_DETACH 1
+#endif
+
 #if USE_LIBUSB
 #include <libusb-1.0/libusb.h>
 #else
@@ -94,7 +99,7 @@ typedef struct {
 #if USE_LIBUSB
 static void find_endpoints(libusb_device_handle *dev_handle, int result[2]) {
 	int endp_in = -1, endp_out = -1;
-	int i, j, k, err;
+	int i, k, err;
 	//struct libusb_device_descriptor desc;
 	struct libusb_config_descriptor *config;
 	libusb_device *device = libusb_get_device(dev_handle);
@@ -102,34 +107,48 @@ static void find_endpoints(libusb_device_handle *dev_handle, int result[2]) {
 		ERR_EXIT("libusb_get_device failed\n");
 	//if (libusb_get_device_descriptor(device, &desc) < 0)
 	//	ERR_EXIT("libusb_get_device_descriptor failed");
-	if (libusb_get_config_descriptor(device, 0, &config) < 0)
-		ERR_EXIT("libusb_get_config_descriptor failed\n");
+	err = libusb_get_config_descriptor(device, 0, &config);
+	if (err < 0)
+		ERR_EXIT("libusb_get_config_descriptor failed : %s\n", libusb_error_name(err));
 
 	for (k = 0; k < config->bNumInterfaces; k++) {
 		const struct libusb_interface *interface;
+		const struct libusb_interface_descriptor *interface_desc;
+		int claim = 0;
 		interface = config->interface + k;
-		for (j = 0; j < interface->num_altsetting; j++) {
-			const struct libusb_interface_descriptor *interface_desc;
-			interface_desc = interface->altsetting + j;
-			for (i = 0; i < interface_desc->bNumEndpoints; i++) {
-				const struct libusb_endpoint_descriptor *endpoint;
-				endpoint = interface_desc->endpoint + i;
-				if (endpoint->bmAttributes == 2) {
-					int addr = endpoint->bEndpointAddress;
-					err = 0;
-					if (addr & 0x80) {
-						if (endp_in >= 0) ERR_EXIT("more than one endp_in\n");
-						endp_in = addr;
-						err = libusb_claim_interface(dev_handle, k);
-					} else {
-						if (endp_out >= 0) ERR_EXIT("more than one endp_out\n");
-						endp_out = addr;
-						err = libusb_claim_interface(dev_handle, k);
-					}
-					if (err < 0)
-						ERR_EXIT("libusb_claim_interface failed : %s\n", libusb_error_name(err));
+		if (interface->num_altsetting < 1) continue;
+		interface_desc = interface->altsetting + 0;
+		for (i = 0; i < interface_desc->bNumEndpoints; i++) {
+			const struct libusb_endpoint_descriptor *endpoint;
+			endpoint = interface_desc->endpoint + i;
+			if (endpoint->bmAttributes == 2) {
+				int addr = endpoint->bEndpointAddress;
+				err = 0;
+				if (addr & 0x80) {
+					if (endp_in >= 0) ERR_EXIT("more than one endp_in\n");
+					endp_in = addr;
+					claim = 1;
+				} else {
+					if (endp_out >= 0) ERR_EXIT("more than one endp_out\n");
+					endp_out = addr;
+					claim = 1;
 				}
 			}
+		}
+		if (claim) {
+#if LIBUSB_DETACH
+			err = libusb_kernel_driver_active(dev_handle, k);
+			if (err > 0) {
+				DBG_LOG("kernel driver is active, trying to detach\n");
+				err = libusb_detach_kernel_driver(dev_handle, k);
+				if (err < 0)
+					ERR_EXIT("libusb_detach_kernel_driver failed : %s\n", libusb_error_name(err));
+			}
+#endif
+			err = libusb_claim_interface(dev_handle, k);
+			if (err < 0)
+				ERR_EXIT("libusb_claim_interface failed : %s\n", libusb_error_name(err));
+			break;
 		}
 	}
 	if (endp_in < 0) ERR_EXIT("endp_in not found\n");
@@ -377,9 +396,8 @@ static int recv_msg(spdio_t *io) {
 			if (err == LIBUSB_ERROR_NO_DEVICE)
 				ERR_EXIT("connection closed\n");
 			else if (err == LIBUSB_ERROR_TIMEOUT) break;
-			else if (err < 0) {
-				ERR_EXIT("libusb_bulk_transfer failed : %s\n", libusb_error_name(err));
-			}
+			else if (err < 0)
+				ERR_EXIT("usb_recv failed : %s\n", libusb_error_name(err));
 #else
 			if (io->timeout >= 0) {
 				struct pollfd fds = { 0 };
@@ -394,7 +412,7 @@ static int recv_msg(spdio_t *io) {
 			len = read(io->serial, io->recv_buf, RECV_BUF_LEN);
 #endif
 			if (len < 0)
-				ERR_EXIT("read(message) failed, ret = %d\n", len);
+				ERR_EXIT("usb_recv failed, ret = %d\n", len);
 
 			if (io->verbose >= 2) {
 				DBG_LOG("recv (%d):\n", len);
