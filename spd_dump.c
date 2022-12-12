@@ -53,8 +53,9 @@ static void print_mem(FILE *f, uint8_t *buf, size_t len) {
 	}
 }
 
-static void print_string(FILE *f, const uint8_t *buf, size_t n) {
+static void print_string(FILE *f, const void *src, size_t n) {
 	size_t i; int a, b = 0;
+	const uint8_t *buf = (const uint8_t*)src;
 	fprintf(f, "\"");
 	for (i = 0; i < n; i++) {
 		a = buf[i]; b = 0;
@@ -629,6 +630,7 @@ int main(int argc, char **argv) {
 	int wait = 30 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
 	int verbose = 0, fdl_loaded = 0;
+	uint32_t ram_addr = ~0u;
 
 #if USE_LIBUSB
 	ret = libusb_init(NULL);
@@ -680,11 +682,21 @@ int main(int argc, char **argv) {
 
 	while (argc > 1) {
 		if (!strcmp(argv[1], "fdl")) {
-			const char *fn; uint32_t addr;
+			const char *fn; uint32_t addr = 0; char *end;
 			if (argc <= 3) ERR_EXIT("bad command\n");
 
 			fn = argv[2];
-			addr = strtol(argv[3], NULL, 0);
+			end = argv[3];
+			if (!memcmp(end, "ram", 3)) {
+				int a = end[3];
+				if (a != '+' && a)
+					ERR_EXIT("bad command args\n");
+				if (ram_addr == ~0u)
+					ERR_EXIT("ram address is unknown\n");
+				end += 3; addr = ram_addr;
+			}
+			addr += strtol(end, &end, 0);
+			if (*end) ERR_EXIT("bad command args\n");
 
 			if (!fdl_loaded) {
 				/* Bootloader (chk = crc16) */
@@ -727,9 +739,16 @@ int main(int argc, char **argv) {
 				if (recv_type(io) != BSL_REP_VER)
 					ERR_EXIT("ver expected\n");
 
-				DBG_LOG("BSL_REP_VER: ");
-				print_string(stderr, io->raw_buf + 4, READ16_BE(io->raw_buf + 2));
-
+				{
+					char *str = (char*)io->raw_buf + 4;
+					int len = READ16_BE(io->raw_buf + 2);
+					DBG_LOG("BSL_REP_VER: ");
+					print_string(stderr, str, len);
+					if (len && !str[len - 1]) {
+						if (strstr(str, "CHIP ID = 0x6531")) ram_addr = 0x34000000;
+						if (strstr(str, "CHIP ID = 0x6562")) ram_addr = 0x14000000;
+					}
+				}
 				encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
 				send_msg(io);
 				ret = recv_msg(io);

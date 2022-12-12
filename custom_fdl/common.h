@@ -60,6 +60,8 @@ static inline uint16_t swap_be16(uint16_t v) { return v; }
 static inline uint32_t swap_be32(uint32_t v) { return v; }
 #endif
 
+extern uint32_t chip_id;
+
 #if CHIP == 0
 extern int _chip;
 #else

@@ -89,8 +89,17 @@ static int read_flash(uint8_t *pkt) {
 }
 
 void dl_main(void) {
-	static const char version[] = { "Spreadtrum Boot Block version 1.2" };
 	uint8_t *pkt;
+#if 0
+	static const char version[] = { "Spreadtrum Boot Block version 1.2" };
+#else
+	static char version[] = { "Custom FDL1: CHIP ID = 0x00000000" };
+	{
+		uint32_t i = 25, t;
+		for (t = chip_id; t; t <<= 4)
+			version[i++] = "0123456789abcdef"[t >> 28];
+	}
+#endif
 
 	dl_packet_init();
 	dl_status.start = -1;
