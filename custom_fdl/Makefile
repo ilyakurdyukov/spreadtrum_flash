@@ -61,5 +61,5 @@ $(OBJDIR)/$(NAME).elf: $(OBJS)
 	$(CC) $(LFLAGS) $(OBJS) -o $@
 
 %.bin: $(OBJDIR)/%.elf
-	$(OBJCOPY) -O binary -R .bss $< $@
+	$(OBJCOPY) -O binary -R .bss -R .got $< $@
 

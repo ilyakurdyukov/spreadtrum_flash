@@ -27,7 +27,8 @@ SECTIONS {
 
 	ASSERT(__stack_bottom - IMAGE_START <= IMAGE_SIZE, "image overflow")
 
-	.junk : { *(.shstrtab) }
+	.shstrtab : { *(.shstrtab) }
+	.got : { *(.got) }
 
 	/DISCARD/ : { *(*) }
 }
