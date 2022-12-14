@@ -26,9 +26,4 @@ SECTIONS {
 	__stack_bottom = __stack_top + STACK_SIZE;
 
 	ASSERT(__stack_bottom - IMAGE_START <= IMAGE_SIZE, "image overflow")
-
-	.shstrtab : { *(.shstrtab) }
-	.got : { *(.got) }
-
-	/DISCARD/ : { *(*) }
 }

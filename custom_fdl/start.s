@@ -26,8 +26,9 @@
 // 12 : Instruction Cache enable
 
 CODE32_FN _start
-	ldr	r4, 3f
-4:	cmp	r4, pc
+	adr	r2, _start
+	ldr	r0, 3f
+4:	cmp	r2, r0
 	bne	4b
 
 	mrc	p15, #0, r0, c1, c0, #0 // Read Control Register
@@ -41,12 +42,10 @@ CODE32_FN _start
 	mov	r2, #0xd3
 	msr	cpsr_c, r2
 	ldr	sp, 1f
-	ldr	r4, 2f
-	add	r4, pc
-	bx	r4
-2:	.long	entry_main - .
+	ldr	pc, 2f
+2:	.long	entry_main
 1:	.long	__stack_bottom
-3:	.long	__image_start + 12
+3:	.long	__image_start
 
 CODE32_FN __gnu_thumb1_case_uqi
 	bic	r12, lr, #1
