@@ -9,21 +9,22 @@ STACK_SIZE = 0x800;
 
 ENTRY(_start)
 SECTIONS {
-	. = BSS_START; __bss_start = .;
-	.bss : { *(.bss .bss.* .gnu.linkonce.b.*) }
-	__bss_end = ALIGN(16);
-
+	.bss BSS_START : {
+		__bss_start = .;
+		*(.bss .bss.* .gnu.linkonce.b.*)
+		__bss_end = ALIGN(4);
+	}
 	ASSERT(__bss_end - BSS_START <= BSS_SIZE, "BSS overflow")
 
-	. = IMAGE_START; __image_start = .;
-	.text : {
+	.text IMAGE_START : {
+		__image_start = .;
 		*(.text._start) *(.text .text.*)
 		*(.rodata .rodata.* .gnu.linkonce.r.*)
 		*(.data .data.* .gnu.linkonce.d.*)
+		. = ALIGN(4);
+		__image_end = .;
+		__stack_top = ALIGN(16);
+		__stack_bottom = __stack_top + STACK_SIZE;
 	}
-	__image_end = .;
-	__stack_top = ALIGN(16);
-	__stack_bottom = __stack_top + STACK_SIZE;
-
 	ASSERT(__stack_bottom - IMAGE_START <= IMAGE_SIZE, "image overflow")
 }
