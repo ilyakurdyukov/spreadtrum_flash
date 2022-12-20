@@ -30,7 +30,7 @@ $ echo 1782 4d00 | sudo tee /sys/bus/usb-serial/drivers/generic/new_id
 Remove the battery, wait 3-10 seconds (to turn it off completely) and put it back. SC6531E devices can boot from USB without a battery.  
 If you plug your phone into USB, you should see it connect as `1782:4d00` for a very short time (you can find it in `syslog`), then it will go into charging mode, disconnecting from USB. If you hold the correct boot key (or keys), the wait time before going into charge mode will be much longer and will be visible in the `lsusb` output.
 
-* For the SC6531DA you must hold the **boot key** while inserting the battery and connecting to USB. An easier way is to connect the USB cable, hold the **boot key** and insert the battery while holding the **boot key**.
+* For SC6531DA you must hold the **boot key** while inserting the battery. You can connect the USB cable before or after that, no need to hold the **boot key** while connecting the cable.
 
 2. Run the tool on your PC:
 `./spd_dump fdl nor_fdl1.bin 0x40004000 read_flash 0x80000003 0 0x400000 flash.bin`  
