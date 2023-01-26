@@ -510,7 +510,7 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 	return buf;
 }
 
-static void send_file(spdio_t *io, const char *fn, uint32_t start_addr) {
+static void send_file(spdio_t *io, const char *fn, uint32_t start_addr, int enddata) {
 	uint8_t *mem; size_t size = 0;
 	uint32_t data[2], i, n, step = 1024;
 	int ret;
@@ -538,6 +538,8 @@ static void send_file(spdio_t *io, const char *fn, uint32_t start_addr) {
 			ERR_EXIT("ack expected\n");
 	}
 	free(mem);
+
+	if (!enddata) return;
 
 	encode_msg(io, BSL_CMD_END_DATA, NULL, 0);
 	send_msg(io);
@@ -629,7 +631,7 @@ int main(int argc, char **argv) {
 	spdio_t *io; int ret, i;
 	int wait = 30 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
-	int verbose = 0, fdl_loaded = 0;
+	int verbose = 0, fdl_loaded = 0, enddata = 1;
 	uint32_t ram_addr = ~0u;
 
 #if USE_LIBUSB
@@ -717,7 +719,7 @@ int main(int argc, char **argv) {
 				if (recv_type(io) != BSL_REP_ACK)
 					ERR_EXIT("ack expected\n");
 
-				send_file(io, fn, addr);
+				send_file(io, fn, addr, enddata);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
 				send_msg(io);
@@ -757,7 +759,7 @@ int main(int argc, char **argv) {
 
 			} else {
 
-				send_file(io, fn, addr);
+				send_file(io, fn, addr, enddata);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
 				send_msg(io);
@@ -787,6 +789,11 @@ int main(int argc, char **argv) {
 			fn = argv[4];
 			dump_mem(io, addr, size, fn);
 			argc -= 4; argv += 4;
+
+		} else if (!strcmp(argv[1], "enddata")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			enddata = atoi(argv[2]);
+			argc -= 2; argv += 2;
 
 		} else if (!strcmp(argv[1], "verbose")) {
 			if (argc <= 2) ERR_EXIT("bad command\n");
