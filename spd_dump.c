@@ -695,7 +695,7 @@ int main(int argc, char **argv) {
 					ERR_EXIT("ram address is unknown\n");
 				end += 3; addr = ram_addr;
 			}
-			addr += strtol(end, &end, 0);
+			addr += strtoll(end, &end, 0);
 			if (*end) ERR_EXIT("bad command args\n");
 
 			if (!fdl_loaded) {
@@ -772,9 +772,9 @@ int main(int argc, char **argv) {
 			const char *fn; uint32_t addr, offset, size;
 			if (argc <= 5) ERR_EXIT("bad command\n");
 
-			addr = strtol(argv[2], NULL, 0);
-			offset = strtol(argv[3], NULL, 0);
-			size = strtol(argv[4], NULL, 0);
+			addr = strtoul(argv[2], NULL, 0);
+			offset = strtoul(argv[3], NULL, 0);
+			size = strtoul(argv[4], NULL, 0);
 			fn = argv[5];
 			dump_flash(io, addr, offset, size, fn);
 			argc -= 5; argv += 5;
@@ -782,8 +782,8 @@ int main(int argc, char **argv) {
 			const char *fn; uint32_t addr, size;
 			if (argc <= 4) ERR_EXIT("bad command\n");
 
-			addr = strtol(argv[2], NULL, 0);
-			size = strtol(argv[3], NULL, 0);
+			addr = strtoul(argv[2], NULL, 0);
+			size = strtoul(argv[3], NULL, 0);
 			fn = argv[4];
 			dump_mem(io, addr, size, fn);
 			argc -= 4; argv += 4;
