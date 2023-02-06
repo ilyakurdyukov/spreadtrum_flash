@@ -21,7 +21,9 @@ static void init_chip_id(void) {
 	if (!CHIP || CHIP == 2) {
 		t0 = MEM4(0x205003fc);
 #if !CHIP
-		if ((t0 ^ 0x65310000) >> 16 == 0) _chip = 2;
+		t1 = (t0 ^ 0x65300000) >> 16;
+		if (t1 == 0) _chip = 3;	// SC6530
+		if (t1 == 1) _chip = 2; // SC6531DA
 #endif
 	}
 #if !CHIP || CHIP == 1
@@ -42,6 +44,10 @@ static void init_chip_id(void) {
 
 void entry_main() {
 	init_chip_id();
+
+#if !CHIP
+	if (!_chip) for (;;);
+#endif
 
 #if DO_SC6531E_INIT
 	if (_chip == 1) init_sc6531e();

@@ -747,7 +747,8 @@ int main(int argc, char **argv) {
 					DBG_LOG("BSL_REP_VER: ");
 					print_string(stderr, str, len);
 					if (len && !str[len - 1]) {
-						if (strstr(str, "CHIP ID = 0x6531")) ram_addr = 0x34000000;
+						if (strstr(str, "CHIP ID = 0x6530") ||
+								strstr(str, "CHIP ID = 0x6531")) ram_addr = 0x34000000;
 						if (strstr(str, "CHIP ID = 0x6562")) ram_addr = 0x14000000;
 					}
 				}

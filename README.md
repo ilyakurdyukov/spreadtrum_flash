@@ -1,6 +1,6 @@
 ## Spreadtrum firmware dumper
 
-Currently only for feature phones based on the SC6531E/SC6531DA chipset. You can edit the code to work with other Spreadtrum chipsets.
+Currently only for feature phones based on the SC6530/SC6531DA/SC6531E chipset. You can edit the code to work with other Spreadtrum chipsets.
 
 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, USE AT YOUR OWN RISK!
 
@@ -27,7 +27,7 @@ $ echo 1782 4d00 | sudo tee /sys/bus/usb-serial/drivers/generic/new_id
 ### Instructions
 
 1. Find the **boot key** for your phone, there can be many different combinations (center, call key, '*', '0', '9'... and even two-key combinations).  
-Remove the battery, wait 3-10 seconds (to turn it off completely) and put it back. SC6531E devices can boot from USB without a battery.  
+Remove the battery, wait 3-10 seconds (to turn it off completely) and put it back. SC6530 and SC6531E devices can boot from USB without a battery.  
 If you plug your phone into USB, you should see it connect as `1782:4d00` for a very short time (you can find it in `syslog`), then it will go into charging mode, disconnecting from USB. If you hold the correct boot key (or keys), the wait time before going into charge mode will be much longer and will be visible in the `lsusb` output.
 
 * For SC6531DA you must hold the **boot key** while inserting the battery. You can connect the USB cable before or after that, no need to hold the **boot key** while connecting the cable.
@@ -45,7 +45,7 @@ This will save the first 4 MB of the firmware (the most common size).
 
 SC6531E: `./spd_dump fdl nor_fdl1.bin 0x40004000 fdl nor_fdl.bin 0x14000000 read_flash 0x80000003 0 0x400000 flash.bin`.
 
-SC6531DA: `./spd_dump fdl nor_fdl.bin 0x34000000 read_flash 0x80000003 0 0x400000 flash.bin`.
+SC6530, SC6531DA: `./spd_dump fdl nor_fdl.bin 0x34000000 read_flash 0x80000003 0 0x400000 flash.bin`.
 
 ### Using the tool on Linux without sudo
 

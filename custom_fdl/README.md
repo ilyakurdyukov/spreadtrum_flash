@@ -1,6 +1,6 @@
-## Custom FDL1 for SC6531
+## Custom FDL1 for SC6530/SC6531
 
-Tested ONLY on SC6531E/SC6531DA.
+Tested ONLY on SC6530/SC6531DA/SC6531E.
 
 ### Usage
 

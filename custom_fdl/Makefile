@@ -1,4 +1,4 @@
-# 0 - detect, 1 - SC6531E, 2 - SC6531DA
+# 0 - detect, 1 - SC6531E, 2 - SC6531DA, 3 - SC6530
 CHIP = 0
 OBJDIR = obj$(CHIP)
 SRCS = start entry common usbio packet channel main
