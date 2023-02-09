@@ -126,11 +126,11 @@ static void sc6531da_init_smc(void) {
 
 	MEM4(base + 0x50) |= 0x20000;
 	MEM2(ps + (ps_off1 << 1)) = 0;
-	DELAY(10);
+	DELAY(10)
 	MEM2(ps + (ps_off2 << 1)) = 0;
-	DELAY(10);
+	DELAY(10)
 	MEM4(base + 0x50) &= ~0x20000;
-	DELAY(10);
+	DELAY(10)
 
 	a = freq_div | conf0 << 8;
 	MEM4(base + 0x24) |= a;
@@ -152,7 +152,7 @@ static void sc6531da_init_smc(void) {
 	MEM4(base + 0x58) = smc58;
 	MEM4(base + 0x5c) = smc5c;
 	MEM4(base + 0x00) &= ~0x100;
-	DELAY(100);
+	DELAY(100)
 }
 #undef get_freq_2
 

@@ -10,6 +10,11 @@
 #include "init_sc6531da.h"
 #endif
 
+#if !CHIP || CHIP == 3
+#define DO_SC6530_INIT 1
+#include "init_sc6530.h"
+#endif
+
 #if !CHIP
 int _chip = 0;
 #endif
@@ -18,7 +23,7 @@ uint32_t chip_id;
 
 static void init_chip_id(void) {
 	uint32_t t0 = 0, t1;
-	if (!CHIP || CHIP == 2) {
+	if (!CHIP || CHIP == 2 || CHIP == 3) {
 		t0 = MEM4(0x205003fc);
 #if !CHIP
 		t1 = (t0 ^ 0x65300000) >> 16;
@@ -55,6 +60,10 @@ void entry_main() {
 
 #if DO_SC6531DA_INIT
 	if (_chip == 2) init_sc6531da();
+#endif
+
+#if DO_SC6530_INIT
+	if (_chip == 3) init_sc6530();
 #endif
 
 	dl_main();

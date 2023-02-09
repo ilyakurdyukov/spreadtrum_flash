@@ -25,7 +25,7 @@ static uint32_t _usb_base;
 
 #define USB_BUFSIZE 0x800
 
-#if USB_BUFSIZE & (USB_BUFSIZE - 1)
+#if (USB_BUFSIZE) & (USB_BUFSIZE - 1)
 #error
 #endif
 
