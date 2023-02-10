@@ -62,7 +62,7 @@ SUBSYSTEMS=="usb", ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="0003", MODE="0666
 
 ### Useful links
 
-1. [SPD Flash Tool source code](https://spflashtools.com/category/source)
+1. [SPD Flash Tool source code](https://spdflashtool.com/source/spd-tool-source-code)
 2. [RDA memory dumper](https://github.com/ihewitt/ivrtrack/blob/main/util/dump.c)
 3. [sharkalaka - FDL1/FDL2 loader in Python](https://github.com/fxsheep/sharkalaka)
 4. [uwpflash - Unisoc flasher for Linux](https://github.com/Mani-Sadhasivam/uwpflash)
