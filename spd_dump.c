@@ -493,6 +493,15 @@ static unsigned recv_type(spdio_t *io) {
 	return READ16_BE(io->raw_buf);
 }
 
+static void send_and_check(spdio_t *io) {
+	int ret;
+	send_msg(io);
+	ret = recv_msg(io);
+	if (!ret) ERR_EXIT("timeout reached\n");
+	if ((ret = recv_type(io)) != BSL_REP_ACK)
+		ERR_EXIT("unexpected response (0x%04x)\n", ret);
+}
+
 static uint8_t* loadfile(const char *fn, size_t *num) {
 	size_t n, j = 0; uint8_t *buf = 0;
 	FILE *fi = fopen(fn, "rb");
@@ -512,7 +521,7 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 
 static void send_file(spdio_t *io, const char *fn, uint32_t start_addr, int enddata) {
 	uint8_t *mem; size_t size = 0;
-	uint32_t data[2], i, n, step = 1024;
+	uint32_t data[2], i, n, step = 528;
 	int ret;
 	mem = loadfile(fn, &size);
 	if (!mem) ERR_EXIT("loadfile(\"%s\") failed\n", fn);
@@ -522,30 +531,21 @@ static void send_file(spdio_t *io, const char *fn, uint32_t start_addr, int endd
 	WRITE32_BE(data + 1, size);
 
 	encode_msg(io, BSL_CMD_START_DATA, data, 4 * 2);
-	send_msg(io);
-	ret = recv_msg(io);
-	if (recv_type(io) != BSL_REP_ACK)
-		ERR_EXIT("ack expected\n");
+	send_and_check(io);
 
 	for (i = 0; i < size; i += n) {
 		n = size - i;
 		// n = spd_transcode_max(mem + i, size - i, 2048 - 2 - 6);
 		if (n > step) n = step;
 		encode_msg(io, BSL_CMD_MIDST_DATA, mem + i, n);
-		send_msg(io);
-		ret = recv_msg(io);
-		if (recv_type(io) != BSL_REP_ACK)
-			ERR_EXIT("ack expected\n");
+		send_and_check(io);
 	}
 	free(mem);
 
 	if (!enddata) return;
 
 	encode_msg(io, BSL_CMD_END_DATA, NULL, 0);
-	send_msg(io);
-	ret = recv_msg(io);
-	if (recv_type(io) != BSL_REP_ACK)
-		ERR_EXIT("ack expected\n");
+	send_and_check(io);
 }
 
 static unsigned dump_flash(spdio_t *io,
@@ -701,6 +701,15 @@ int main(int argc, char **argv) {
 			if (*end) ERR_EXIT("bad command args\n");
 
 			if (!fdl_loaded) {
+				// Required for smartphones.
+				// Is there a way to do the same with usb-serial?
+#if USE_LIBUSB
+				ret = libusb_control_transfer(io->dev_handle,
+						0x21, 34, 0x601, 0, NULL, 0, io->timeout);
+				if (ret < 0)
+					ERR_EXIT("libusb_control_transfer failed : %s\n",
+							libusb_error_name(ret));
+#endif
 				/* Bootloader (chk = crc16) */
 				io->flags |= FLAGS_CRC16;
 
@@ -714,18 +723,12 @@ int main(int argc, char **argv) {
 				print_string(stderr, io->raw_buf + 4, READ16_BE(io->raw_buf + 2));
 
 				encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
-				send_msg(io);
-				ret = recv_msg(io);
-				if (recv_type(io) != BSL_REP_ACK)
-					ERR_EXIT("ack expected\n");
+				send_and_check(io);
 
 				send_file(io, fn, addr, enddata);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
-				send_msg(io);
-				ret = recv_msg(io);
-				if (recv_type(io) != BSL_REP_ACK)
-					ERR_EXIT("ack expected\n");
+				send_and_check(io);
 
 				/* FDL1 (chk = sum) */
 				io->flags &= ~FLAGS_CRC16;
@@ -753,24 +756,26 @@ int main(int argc, char **argv) {
 					}
 				}
 				encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
-				send_msg(io);
-				ret = recv_msg(io);
-				if (recv_type(io) != BSL_REP_ACK)
-					ERR_EXIT("ack expected\n");
+				send_and_check(io);
 
 			} else {
 
 				send_file(io, fn, addr, enddata);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
-				send_msg(io);
-				ret = recv_msg(io);
-				if (recv_type(io) != BSL_REP_ACK)
-					ERR_EXIT("ack expected\n");
+				// Feature phones respond immediately,
+				// but it may take a second for a smartphone to respond.
+				{
+					int timeout = io->timeout;
+					io->timeout = timeout > 5000 ? timeout : 5000;
+					send_and_check(io);
+					io->timeout = timeout;
+				}
 			}
 
 			fdl_loaded++;
 			argc -= 3; argv += 3;
+
 		} else if (!strcmp(argv[1], "read_flash")) {
 			const char *fn; uint32_t addr, offset, size;
 			if (argc <= 5) ERR_EXIT("bad command\n");
@@ -781,6 +786,7 @@ int main(int argc, char **argv) {
 			fn = argv[5];
 			dump_flash(io, addr, offset, size, fn);
 			argc -= 5; argv += 5;
+
 		} else if (!strcmp(argv[1], "read_mem")) {
 			const char *fn; uint32_t addr, size;
 			if (argc <= 4) ERR_EXIT("bad command\n");
@@ -795,6 +801,16 @@ int main(int argc, char **argv) {
 			if (argc <= 2) ERR_EXIT("bad command\n");
 			enddata = atoi(argv[2]);
 			argc -= 2; argv += 2;
+
+		} else if (!strcmp(argv[1], "reset")) {
+			encode_msg(io, BSL_CMD_NORMAL_RESET, NULL, 0);
+			send_and_check(io);
+			argc -= 1; argv += 1;
+
+		} else if (!strcmp(argv[1], "power_off")) {
+			encode_msg(io, BSL_CMD_POWER_OFF, NULL, 0);
+			send_and_check(io);
+			argc -= 1; argv += 1;
 
 		} else if (!strcmp(argv[1], "verbose")) {
 			if (argc <= 2) ERR_EXIT("bad command\n");
