@@ -288,6 +288,18 @@ static unsigned spd_checksum(unsigned crc, const void *src, int len, int final) 
 	return crc;
 }
 
+#define WRITE16_LE(p, a) do { \
+	((uint8_t*)(p))[0] = (uint8_t)(a); \
+	((uint8_t*)(p))[1] = (a) >> 8; \
+} while (0)
+
+#define WRITE32_LE(p, a) do { \
+	((uint8_t*)(p))[0] = (uint8_t)(a); \
+	((uint8_t*)(p))[1] = (a) >> 8; \
+	((uint8_t*)(p))[2] = (a) >> 16; \
+	((uint8_t*)(p))[3] = (a) >> 24; \
+} while (0)
+
 #define WRITE16_BE(p, a) do { \
 	((uint8_t*)(p))[0] = (a) >> 8; \
 	((uint8_t*)(p))[1] = (uint8_t)(a); \
@@ -498,7 +510,11 @@ static void send_and_check(spdio_t *io) {
 	send_msg(io);
 	ret = recv_msg(io);
 	if (!ret) ERR_EXIT("timeout reached\n");
-	if ((ret = recv_type(io)) != BSL_REP_ACK)
+	ret = recv_type(io);
+	// not a fatal error
+	if (ret == BSL_REP_INCOMPATIBLE_PARTITION)
+		DBG_LOG("!!! incompatible partition\n");
+	else if (ret != BSL_REP_ACK)
 		ERR_EXIT("unexpected response (0x%04x)\n", ret);
 }
 
@@ -519,7 +535,7 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 	return buf;
 }
 
-static void send_file(spdio_t *io, const char *fn, uint32_t start_addr, int enddata) {
+static void send_file(spdio_t *io, const char *fn, uint32_t start_addr, int end_data) {
 	uint8_t *mem; size_t size = 0;
 	uint32_t data[2], i, n, step = 528;
 	int ret;
@@ -542,7 +558,7 @@ static void send_file(spdio_t *io, const char *fn, uint32_t start_addr, int endd
 	}
 	free(mem);
 
-	if (!enddata) return;
+	if (!end_data) return;
 
 	encode_msg(io, BSL_CMD_END_DATA, NULL, 0);
 	send_and_check(io);
@@ -550,19 +566,19 @@ static void send_file(spdio_t *io, const char *fn, uint32_t start_addr, int endd
 
 static unsigned dump_flash(spdio_t *io,
 		uint32_t addr, uint32_t start, uint32_t len, const char *fn) {
-	uint32_t n, off, nread, step = 1024;
+	uint32_t n, offset, nread, step = 1024;
 	int ret;
 	FILE *fo = fopen(fn, "wb");
 	if (!fo) ERR_EXIT("fopen(dump) failed\n");
 
-	for (off = start; off < start + len; ) {
+	for (offset = start; offset < start + len; ) {
 		uint32_t data[3];
-		n = start + len - off;
+		n = start + len - offset;
 		if (n > step) n = step;
 
 		WRITE32_BE(data, addr);
 		WRITE32_BE(data + 1, n);
-		WRITE32_BE(data + 2, off);
+		WRITE32_BE(data + 2, offset);
 
 		encode_msg(io, BSL_CMD_READ_FLASH, data, 4 * 3);
 		send_msg(io);
@@ -576,31 +592,31 @@ static unsigned dump_flash(spdio_t *io,
 			ERR_EXIT("unexpected length\n");
 		if (fwrite(io->raw_buf + 4, 1, nread, fo) != nread) 
 			ERR_EXIT("fwrite(dump) failed\n");
-		off += nread;
+		offset += nread;
 		if (n != nread) break;
 	}
-	DBG_LOG("dump_flash: 0x%08x+0x%x, target: 0x%x, read: 0x%x\n", addr, start, len, off - start);
+	DBG_LOG("dump_flash: 0x%08x+0x%x, target: 0x%x, read: 0x%x\n", addr, start, len, offset - start);
 	fclose(fo);
-	return off;
+	return offset;
 }
 
 static unsigned dump_mem(spdio_t *io,
 		uint32_t start, uint32_t len, const char *fn) {
-	uint32_t n, off, nread, step = 1024;
+	uint32_t n, offset, nread, step = 1024;
 	int ret;
 	FILE *fo = fopen(fn, "wb");
 	if (!fo) ERR_EXIT("fopen(dump) failed\n");
 
-	for (off = start; off < start + len; ) {
+	for (offset = start; offset < start + len; ) {
 		uint32_t data[3];
-		n = start + len - off;
+		n = start + len - offset;
 		if (n > step) n = step;
 
-		WRITE32_BE(data, off);
+		WRITE32_BE(data, offset);
 		WRITE32_BE(data + 1, n);
 		WRITE32_BE(data + 2, 0);	// unused
 
-		encode_msg(io, BSL_CMD_READ_FLASH, data, 4 * 3);
+		encode_msg(io, BSL_CMD_READ_FLASH, data, sizeof(data));
 		send_msg(io);
 		ret = recv_msg(io);
 		if ((ret = recv_type(io)) != BSL_REP_READ_FLASH) {
@@ -612,12 +628,116 @@ static unsigned dump_mem(spdio_t *io,
 			ERR_EXIT("unexpected length\n");
 		if (fwrite(io->raw_buf + 4, 1, nread, fo) != nread) 
 			ERR_EXIT("fwrite(dump) failed\n");
-		off += nread;
+		offset += nread;
 		if (n != nread) break;
 	}
-	DBG_LOG("dump_mem: 0x%08x, target: 0x%x, read: 0x%x\n", start, len, off - start);
+	DBG_LOG("dump_mem: 0x%08x, target: 0x%x, read: 0x%x\n", start, len, offset - start);
 	fclose(fo);
-	return off;
+	return offset;
+}
+
+static int copy_to_wstr(uint16_t *d, size_t n, const char *s) {
+	size_t i; int a = -1;
+	for (i = 0; a && i < n; i++) { a = s[i]; WRITE16_LE(d + i, a); }
+	return a;
+}
+
+static uint64_t dump_partition(spdio_t *io,
+		const char *name, uint64_t start, uint64_t len, const char *fn) {
+	uint32_t n, nread, step = 1024, t32; uint64_t offset, n64;
+	struct {
+		uint16_t name[36];
+		uint32_t size, size_hi; uint64_t dummy;
+	} pkt = { 0 };
+	int ret, mode64 = (start + len) >> 32;
+
+	ret = copy_to_wstr(pkt.name, sizeof(pkt.name) / 2, name);
+	if (ret) ERR_EXIT("name too long\n");
+	n64 = start + len;
+	WRITE32_LE(&pkt.size, n64);
+	if (mode64) {
+		t32 = n64 >> 32;
+		WRITE32_LE(&pkt.size_hi, t32);
+	}
+
+	encode_msg(io, BSL_CMD_READ_START, &pkt,
+			sizeof(pkt.name) + (mode64 ? 16 : 4));
+	send_and_check(io);
+
+	FILE *fo = fopen(fn, "wb");
+	if (!fo) ERR_EXIT("fopen(dump) failed\n");
+
+	for (offset = start; (n64 = start + len - offset); ) {
+		uint32_t data[3];
+		n = n64 > step ? step : n64;
+
+		WRITE32_LE(data, n);
+		WRITE32_LE(data + 1, offset);
+		t32 = offset >> 32;
+		WRITE32_LE(data + 2, t32);
+
+		encode_msg(io, BSL_CMD_READ_MIDST, data, mode64 ? 12 : 8);
+		send_msg(io);
+		ret = recv_msg(io);
+		if ((ret = recv_type(io)) != BSL_REP_READ_FLASH) {
+			DBG_LOG("unexpected response (0x%04x)\n", ret);
+			break;
+		}
+		nread = READ16_BE(io->raw_buf + 2);
+		if (n < nread)
+			ERR_EXIT("unexpected length\n");
+		if (fwrite(io->raw_buf + 4, 1, nread, fo) != nread) 
+			ERR_EXIT("fwrite(dump) failed\n");
+		offset += nread;
+		if (n != nread) break;
+	}
+	DBG_LOG("dump_partition: %s+0x%llx, target: 0x%llx, read: 0x%llx\n",
+			name, (long long)start, (long long)len,
+			(long long)(offset - start));
+	fclose(fo);
+
+	encode_msg(io, BSL_CMD_READ_END, NULL, 0);
+	send_and_check(io);
+	return offset;
+}
+
+static uint64_t find_partition_size(spdio_t *io, const char *name) {
+	uint32_t t32; uint64_t offset = 0, n64;
+	struct {
+		uint16_t name[36];
+		uint32_t size, size_hi; uint64_t dummy;
+	} pkt = { 0 };
+	int ret, i;
+
+	ret = copy_to_wstr(pkt.name, sizeof(pkt.name) / 2, name);
+	if (ret) ERR_EXIT("name too long\n");
+	// this size isn't checked
+	n64 = 1ll << 48;
+	WRITE32_LE(&pkt.size, n64);
+	t32 = n64 >> 32;
+	WRITE32_LE(&pkt.size_hi, t32);
+
+	encode_msg(io, BSL_CMD_READ_START, &pkt, sizeof(pkt));
+	send_and_check(io);
+
+	for (i = 47; i >= 20; i--) {
+		uint32_t data[3];
+		n64 = offset + (1ll << i) - (1 << 20);
+		WRITE32_LE(data, 16);
+		WRITE32_LE(data + 1, n64);
+		t32 = n64 >> 32;
+		WRITE32_LE(data + 2, t32);
+
+		encode_msg(io, BSL_CMD_READ_MIDST, data, sizeof(data));
+		send_msg(io);
+		recv_msg(io);
+		ret = recv_type(io);
+		if (ret == BSL_REP_READ_FLASH) offset = n64 + (1 << 20);
+	}
+	DBG_LOG("partition_size: %s, 0x%llx\n", name, (long long)offset);
+	encode_msg(io, BSL_CMD_READ_END, NULL, 0);
+	send_and_check(io);
+	return offset;
 }
 
 #define REOPEN_FREQ 2
@@ -631,8 +751,9 @@ int main(int argc, char **argv) {
 	spdio_t *io; int ret, i;
 	int wait = 30 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
-	int verbose = 0, fdl_loaded = 0, enddata = 1;
+	int verbose = 0, fdl_loaded = 0;
 	uint32_t ram_addr = ~0u;
+	int keep_charge = 0, end_data = 1;
 
 #if USE_LIBUSB
 	ret = libusb_init(NULL);
@@ -725,7 +846,7 @@ int main(int argc, char **argv) {
 				encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
 				send_and_check(io);
 
-				send_file(io, fn, addr, enddata);
+				send_file(io, fn, addr, end_data);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
 				send_and_check(io);
@@ -755,12 +876,18 @@ int main(int argc, char **argv) {
 						if (strstr(str, "CHIP ID = 0x6562")) ram_addr = 0x14000000;
 					}
 				}
+
 				encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
 				send_and_check(io);
 
+				if (keep_charge) {
+					encode_msg(io, BSL_CMD_KEEP_CHARGE, NULL, 0);
+					send_and_check(io);
+				}
+
 			} else {
 
-				send_file(io, fn, addr, enddata);
+				send_file(io, fn, addr, end_data);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
 				// Feature phones respond immediately,
@@ -777,29 +904,70 @@ int main(int argc, char **argv) {
 			argc -= 3; argv += 3;
 
 		} else if (!strcmp(argv[1], "read_flash")) {
-			const char *fn; uint32_t addr, offset, size;
+			const char *fn; uint64_t addr, offset, size;
 			if (argc <= 5) ERR_EXIT("bad command\n");
 
-			addr = strtoul(argv[2], NULL, 0);
-			offset = strtoul(argv[3], NULL, 0);
-			size = strtoul(argv[4], NULL, 0);
+			addr = strtoull(argv[2], NULL, 0);
+			offset = strtoull(argv[3], NULL, 0);
+			size = strtoull(argv[4], NULL, 0);
 			fn = argv[5];
+			if ((addr | size | offset | (addr + offset + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
 			dump_flash(io, addr, offset, size, fn);
 			argc -= 5; argv += 5;
 
 		} else if (!strcmp(argv[1], "read_mem")) {
-			const char *fn; uint32_t addr, size;
+			const char *fn; uint64_t addr, size;
 			if (argc <= 4) ERR_EXIT("bad command\n");
 
-			addr = strtoul(argv[2], NULL, 0);
-			size = strtoul(argv[3], NULL, 0);
+			addr = strtoull(argv[2], NULL, 0);
+			size = strtoull(argv[3], NULL, 0);
 			fn = argv[4];
+			if ((addr | size | (addr + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
 			dump_mem(io, addr, size, fn);
 			argc -= 4; argv += 4;
 
-		} else if (!strcmp(argv[1], "enddata")) {
+		} else if (!strcmp(argv[1], "part_size")) {
+			const char *name;
 			if (argc <= 2) ERR_EXIT("bad command\n");
-			enddata = atoi(argv[2]);
+
+			name = argv[2];
+			find_partition_size(io, name);
+			argc -= 2; argv += 2;
+
+		} else if (!strcmp(argv[1], "read_part")) {
+			const char *name, *fn; uint64_t offset, size;
+			if (argc <= 5) ERR_EXIT("bad command\n");
+
+			name = argv[2];
+			offset = strtoull(argv[3], NULL, 0);
+			size = strtoull(argv[4], NULL, 0);
+			fn = argv[5];
+			if (offset + size < offset)
+				ERR_EXIT("64-bit limit reached\n");
+			dump_partition(io, name, offset, size, fn);
+			argc -= 5; argv += 5;
+
+		} else if (!strcmp(argv[1], "chip_uid")) {
+			encode_msg(io, BSL_CMD_READ_CHIP_UID, NULL, 0);
+			send_msg(io);
+			ret = recv_msg(io);
+			if ((ret = recv_type(io)) != BSL_REP_READ_CHIP_UID)
+				ERR_EXIT("unexpected response (0x%04x)\n", ret);
+
+			DBG_LOG("BSL_REP_READ_CHIP_UID: ");
+			print_string(stderr, io->raw_buf + 4, READ16_BE(io->raw_buf + 2));
+			argc -= 1; argv += 1;
+
+		} else if (!strcmp(argv[1], "keep_charge")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			keep_charge = atoi(argv[2]);
+			argc -= 2; argv += 2;
+
+		} else if (!strcmp(argv[1], "end_data")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			end_data = atoi(argv[2]);
 			argc -= 2; argv += 2;
 
 		} else if (!strcmp(argv[1], "reset")) {

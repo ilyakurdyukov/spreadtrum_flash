@@ -63,7 +63,7 @@ enum {
 	BSL_CMD_REPARTITION          = 0x0B, /* Repartition nand flash */
 	BSL_CMD_READ_FLASH_TYPE      = 0x0C, /* Read flash type */
 	BSL_CMD_READ_FLASH_INFO      = 0x0D, /* Read flash infomation */
-	BSL_CMD_READ_SECTOR_SIZE     = 0x0F, /* Read Nor flash sector size*/
+	BSL_CMD_READ_SECTOR_SIZE     = 0x0F, /* Read Nor flash sector size */
 	BSL_CMD_READ_START           = 0x10, /* Read flash start */
 	BSL_CMD_READ_MIDST           = 0x11, /* Read flash midst */
 	BSL_CMD_READ_END             = 0x12, /* Read flash end */
@@ -127,4 +127,9 @@ enum {
 	BSL_REP_READ_FLASH           = 0x93,
 	BSL_REP_READ_CHIP_TYPE       = 0x94,
 	BSL_REP_READ_NVITEM          = 0x95,
+
+	BSL_REP_INCOMPATIBLE_PARTITION = 0x96,
+	BSL_REP_SIGN_VERIFY_ERROR    = 0xA6,
+	BSL_REP_READ_CHIP_UID        = 0xAB,
+	BSL_REP_UNSUPPORTED_COMMAND  = 0xFE,
 };
