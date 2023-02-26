@@ -83,7 +83,7 @@ static void print_string(FILE *f, const void *src, size_t n) {
 #define RECV_BUF_LEN 1024
 
 typedef struct {
-	uint8_t *raw_buf, *enc_buf, *recv_buf;
+	uint8_t *raw_buf, *enc_buf, *recv_buf, *temp_buf;
 #if USE_LIBUSB
 	libusb_device_handle *dev_handle;
 	int endp_in, endp_out;
@@ -213,6 +213,7 @@ static spdio_t* spdio_init(int serial, int flags) {
 	io->recv_len = 0;
 	io->recv_pos = 0;
 	io->recv_buf = p; p += RECV_BUF_LEN;
+	io->temp_buf = p + 4;
 	io->raw_buf = p; p += 4 + 0x10000 + 2;
 	io->enc_buf = p;
 	io->verbose = 0;
@@ -518,7 +519,7 @@ static void send_and_check(spdio_t *io) {
 		ERR_EXIT("unexpected response (0x%04x)\n", ret);
 }
 
-static uint8_t* loadfile(const char *fn, size_t *num) {
+static uint8_t* loadfile(const char *fn, size_t *num, size_t extra) {
 	size_t n, j = 0; uint8_t *buf = 0;
 	FILE *fi = fopen(fn, "rb");
 	if (fi) {
@@ -526,7 +527,7 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 		n = ftell(fi);
 		if (n) {
 			fseek(fi, 0, SEEK_SET);
-			buf = (uint8_t*)malloc(n);
+			buf = (uint8_t*)malloc(n + extra);
 			if (buf) j = fread(buf, 1, n, fi);
 		}
 		fclose(fi);
@@ -535,11 +536,12 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 	return buf;
 }
 
-static void send_file(spdio_t *io, const char *fn, uint32_t start_addr, int end_data) {
+static void send_file(spdio_t *io, const char *fn,
+		uint32_t start_addr, int end_data, unsigned step) {
 	uint8_t *mem; size_t size = 0;
-	uint32_t data[2], i, n, step = 528;
+	uint32_t data[2], i, n;
 	int ret;
-	mem = loadfile(fn, &size);
+	mem = loadfile(fn, &size, 0);
 	if (!mem) ERR_EXIT("loadfile(\"%s\") failed\n", fn);
 	if (size >> 32) ERR_EXIT("file too big\n");
 
@@ -565,8 +567,9 @@ static void send_file(spdio_t *io, const char *fn, uint32_t start_addr, int end_
 }
 
 static unsigned dump_flash(spdio_t *io,
-		uint32_t addr, uint32_t start, uint32_t len, const char *fn) {
-	uint32_t n, offset, nread, step = 1024;
+		uint32_t addr, uint32_t start, uint32_t len,
+		const char *fn, unsigned step) {
+	uint32_t n, offset, nread;
 	int ret;
 	FILE *fo = fopen(fn, "wb");
 	if (!fo) ERR_EXIT("fopen(dump) failed\n");
@@ -601,8 +604,8 @@ static unsigned dump_flash(spdio_t *io,
 }
 
 static unsigned dump_mem(spdio_t *io,
-		uint32_t start, uint32_t len, const char *fn) {
-	uint32_t n, offset, nread, step = 1024;
+		uint32_t start, uint32_t len, const char *fn, unsigned step) {
+	uint32_t n, offset, nread;
 	int ret;
 	FILE *fo = fopen(fn, "wb");
 	if (!fo) ERR_EXIT("fopen(dump) failed\n");
@@ -643,8 +646,9 @@ static int copy_to_wstr(uint16_t *d, size_t n, const char *s) {
 }
 
 static uint64_t dump_partition(spdio_t *io,
-		const char *name, uint64_t start, uint64_t len, const char *fn) {
-	uint32_t n, nread, step = 1024, t32; uint64_t offset, n64;
+		const char *name, uint64_t start, uint64_t len,
+		const char *fn, unsigned step) {
+	uint32_t n, nread, t32; uint64_t offset, n64;
 	struct {
 		uint16_t name[36];
 		uint32_t size, size_hi; uint64_t dummy;
@@ -701,6 +705,69 @@ static uint64_t dump_partition(spdio_t *io,
 	return offset;
 }
 
+static int scan_xml_partitions(const char *fn, uint8_t *buf, size_t buf_size) {
+	const char *part1 = "Partitions>";
+	char *src, *p, name[36]; size_t size = 0;
+	int part1_len = strlen(part1), found = 0, stage = 0;
+	src = (char*)loadfile(fn, &size, 1);
+	if (!src) ERR_EXIT("loadfile failed\n");
+	src[size] = 0;
+	p = src;
+	for (;;) {
+		int i, a = *p++, size, n; char c;
+		if (a == ' ' || a == '\t' || a == '\n' || a == '\r') continue;
+		if (a != '<') {
+			if (!a) break;
+			if (stage != 1) continue;
+			ERR_EXIT("xml: unexpected symbol\n");
+		}
+		if (!memcmp(p, "!--", 3)) {
+			p = strstr(p + 3, "--");
+			if (!p || !((p[-1] - '!') | (p[-2] - '<')) || p[2] != '>')
+				ERR_EXIT("xml: unexpected syntax\n");
+			p += 3;
+			continue;
+		}
+		if (stage != 1) {
+			stage += !memcmp(p, part1, part1_len);
+			if (stage > 2)
+				ERR_EXIT("xml: more than one partition lists\n");
+			p = strchr(p, '>');
+			if (!p) ERR_EXIT("xml: unexpected syntax\n");
+			p++;
+			continue;
+		}
+		if (*p == '/' && !memcmp(p + 1, part1, part1_len)) {
+			p = p + 1 + part1_len;
+			stage++;
+			continue;
+		}
+		i = sscanf(p, "Partition id=\"%35[^\"]\" size=\"%i\"/%n%c", name, &size, &n, &c);
+		if (i != 3 || c != '>')
+			ERR_EXIT("xml: unexpected syntax\n");
+		p += n + 1;
+		if (buf_size < 0x4c)
+			ERR_EXIT("xml: too many partitions\n");
+		buf_size -= 0x4c;
+		memset(buf, 0, 36 * 2);
+		for (i = 0; (a = name[i]); i++) buf[i * 2] = a;
+		if (!i) ERR_EXIT("empty partition name\n");
+		WRITE32_LE(buf + 0x48, size);
+		buf += 0x4c;
+		found++;
+	}
+	if (stage != 2) ERR_EXIT("xml: unexpected syntax\n");
+	free(src);
+	return found;
+}
+
+static void repartition(spdio_t *io, const char *fn) {
+	uint8_t *buf = io->temp_buf;
+	int n = scan_xml_partitions(fn, buf, 0xffff);
+	encode_msg(io, BSL_CMD_REPARTITION, buf, n * 0x4c);
+	send_and_check(io);
+}
+
 static uint64_t find_partition_size(spdio_t *io, const char *name) {
 	uint32_t t32; uint64_t offset = 0, n64;
 	struct {
@@ -753,7 +820,7 @@ int main(int argc, char **argv) {
 	const char *tty = "/dev/ttyUSB0";
 	int verbose = 0, fdl_loaded = 0;
 	uint32_t ram_addr = ~0u;
-	int keep_charge = 0, end_data = 1;
+	int keep_charge = 0, end_data = 1, blk_size = 0;
 
 #if USE_LIBUSB
 	ret = libusb_init(NULL);
@@ -846,7 +913,8 @@ int main(int argc, char **argv) {
 				encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
 				send_and_check(io);
 
-				send_file(io, fn, addr, end_data);
+				send_file(io, fn, addr, end_data,
+					blk_size ? blk_size : 528);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
 				send_and_check(io);
@@ -887,7 +955,8 @@ int main(int argc, char **argv) {
 
 			} else {
 
-				send_file(io, fn, addr, end_data);
+				send_file(io, fn, addr, end_data,
+					blk_size ? blk_size : 528);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
 				// Feature phones respond immediately,
@@ -913,7 +982,8 @@ int main(int argc, char **argv) {
 			fn = argv[5];
 			if ((addr | size | offset | (addr + offset + size)) >> 32)
 				ERR_EXIT("32-bit limit reached\n");
-			dump_flash(io, addr, offset, size, fn);
+			dump_flash(io, addr, offset, size, fn,
+					blk_size ? blk_size : 1024);
 			argc -= 5; argv += 5;
 
 		} else if (!strcmp(argv[1], "read_mem")) {
@@ -925,7 +995,8 @@ int main(int argc, char **argv) {
 			fn = argv[4];
 			if ((addr | size | (addr + size)) >> 32)
 				ERR_EXIT("32-bit limit reached\n");
-			dump_mem(io, addr, size, fn);
+			dump_mem(io, addr, size, fn,
+					blk_size ? blk_size : 1024);
 			argc -= 4; argv += 4;
 
 		} else if (!strcmp(argv[1], "part_size")) {
@@ -946,8 +1017,16 @@ int main(int argc, char **argv) {
 			fn = argv[5];
 			if (offset + size < offset)
 				ERR_EXIT("64-bit limit reached\n");
-			dump_partition(io, name, offset, size, fn);
+			dump_partition(io, name, offset, size, fn,
+					blk_size ? blk_size : 1024);
 			argc -= 5; argv += 5;
+
+		} else if (!strcmp(argv[1], "blk_size")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			blk_size = strtol(argv[2], NULL, 0);
+			blk_size = blk_size < 0 ? 0 :
+					blk_size > 0xffff ? 0xffff : blk_size;
+			argc -= 2; argv += 2;
 
 		} else if (!strcmp(argv[1], "chip_uid")) {
 			encode_msg(io, BSL_CMD_READ_CHIP_UID, NULL, 0);
