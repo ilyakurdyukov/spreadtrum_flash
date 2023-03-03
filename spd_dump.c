@@ -15,11 +15,13 @@
 */
 
 #define _GNU_SOURCE 1
+#define _FILE_OFFSET_BITS 64
 
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <ctype.h> // tolower
 
 #ifndef LIBUSB_DETACH
 /* detach the device from crappy kernel drivers */
@@ -301,6 +303,12 @@ static unsigned spd_checksum(unsigned crc, const void *src, int len, int final) 
 	((uint8_t*)(p))[3] = (a) >> 24; \
 } while (0)
 
+#define READ32_LE(p) ( \
+	((uint8_t*)(p))[0] | \
+	((uint8_t*)(p))[1] << 8 | \
+	((uint8_t*)(p))[2] << 16 | \
+	((uint8_t*)(p))[3] << 24)
+
 #define WRITE16_BE(p, a) do { \
 	((uint8_t*)(p))[0] = (a) >> 8; \
 	((uint8_t*)(p))[1] = (uint8_t)(a); \
@@ -500,6 +508,14 @@ static int recv_msg(spdio_t *io) {
 	return nread;
 }
 
+static int recv_msg_timeout(spdio_t *io, int timeout) {
+	int old = io->timeout, ret;
+	io->timeout = old > timeout ? old : timeout;
+	ret = recv_msg(io);
+	io->timeout = old;
+	return ret;
+}
+
 static unsigned recv_type(spdio_t *io) {
 	int a;
 	if (io->raw_len < 6) return -1;
@@ -512,11 +528,21 @@ static void send_and_check(spdio_t *io) {
 	ret = recv_msg(io);
 	if (!ret) ERR_EXIT("timeout reached\n");
 	ret = recv_type(io);
-	// not a fatal error
-	if (ret == BSL_REP_INCOMPATIBLE_PARTITION)
-		DBG_LOG("!!! incompatible partition\n");
-	else if (ret != BSL_REP_ACK)
+	if (ret != BSL_REP_ACK)
 		ERR_EXIT("unexpected response (0x%04x)\n", ret);
+}
+
+static void check_confirm(const char *name) {
+	char buf[4], c; int i;
+	printf("Answer \"yes\" to confirm the \"%s\" command: ", name);
+	fflush(stdout);
+	do {
+		i = scanf("%3s%c", buf, &c);
+		if (i != 2 || c != '\n') break;
+		for (i = 0; buf[i]; i++) buf[i] = tolower(buf[i]);
+		if (!strcmp(buf, "yes")) return;
+	} while (0);
+	ERR_EXIT("operation is not confirmed\n");
 }
 
 static uint8_t* loadfile(const char *fn, size_t *num, size_t extra) {
@@ -645,30 +671,45 @@ static int copy_to_wstr(uint16_t *d, size_t n, const char *s) {
 	return a;
 }
 
-static uint64_t dump_partition(spdio_t *io,
-		const char *name, uint64_t start, uint64_t len,
-		const char *fn, unsigned step) {
-	uint32_t n, nread, t32; uint64_t offset, n64;
+static int copy_from_wstr(char *d, size_t n, const uint16_t *s) {
+	size_t i; int a = -1;
+	for (i = 0; a && i < n; i++) { d[i] = a = s[i]; if (a >> 8) break; }
+	return a;
+}
+
+static void select_partition(spdio_t *io, const char *name,
+		uint64_t size, int mode64, int cmd) {
+	uint32_t t32; uint64_t n64;
 	struct {
 		uint16_t name[36];
 		uint32_t size, size_hi; uint64_t dummy;
 	} pkt = { 0 };
-	int ret, mode64 = (start + len) >> 32;
+	int ret;
 
 	ret = copy_to_wstr(pkt.name, sizeof(pkt.name) / 2, name);
 	if (ret) ERR_EXIT("name too long\n");
-	n64 = start + len;
+	n64 = size;
 	WRITE32_LE(&pkt.size, n64);
 	if (mode64) {
 		t32 = n64 >> 32;
 		WRITE32_LE(&pkt.size_hi, t32);
 	}
 
-	encode_msg(io, BSL_CMD_READ_START, &pkt,
+	encode_msg(io, cmd, &pkt,
 			sizeof(pkt.name) + (mode64 ? 16 : 4));
+}
+
+static uint64_t dump_partition(spdio_t *io,
+		const char *name, uint64_t start, uint64_t len,
+		const char *fn, unsigned step) {
+	uint32_t n, nread, t32; uint64_t offset, n64;
+	int ret, mode64 = (start + len) >> 32;
+	FILE *fo;
+
+	select_partition(io, name, start + len, mode64, BSL_CMD_READ_START);
 	send_and_check(io);
 
-	FILE *fo = fopen(fn, "wb");
+	fo = fopen(fn, "wb");
 	if (!fo) ERR_EXIT("fopen(dump) failed\n");
 
 	for (offset = start; (n64 = start + len - offset); ) {
@@ -703,6 +744,36 @@ static uint64_t dump_partition(spdio_t *io,
 	encode_msg(io, BSL_CMD_READ_END, NULL, 0);
 	send_and_check(io);
 	return offset;
+}
+
+static uint64_t read_pactime(spdio_t *io) {
+	uint32_t n, offset = 0x81400, len = 8;
+	int ret; uint32_t data[2];
+	unsigned long long time, unix;
+
+	select_partition(io, "miscdata", offset + len, 0, BSL_CMD_READ_START);
+	send_and_check(io);
+
+	WRITE32_LE(data, len);
+	WRITE32_LE(data + 1, offset);
+	encode_msg(io, BSL_CMD_READ_MIDST, data, sizeof(data));
+	send_msg(io);
+	recv_msg(io);
+	if ((ret = recv_type(io)) != BSL_REP_READ_FLASH)
+		ERR_EXIT("unexpected response (0x%04x)\n", ret);
+	n = READ16_BE(io->raw_buf + 2);
+	if (n != len) ERR_EXIT("unexpected length\n");
+
+	time = (uint32_t)READ32_LE(io->raw_buf + 4);
+	time |= (uint64_t)READ32_LE(io->raw_buf + 8) << 32;
+
+	unix = time ? time / 10000000 - 11644473600 : 0;
+	// $ date -d @unixtime
+	DBG_LOG("pactime = 0x%llx (unix = %llu)\n", time, unix);
+
+	encode_msg(io, BSL_CMD_READ_END, NULL, 0);
+	send_and_check(io);
+	return time;
 }
 
 static int scan_xml_partitions(const char *fn, uint8_t *buf, size_t buf_size) {
@@ -754,43 +825,117 @@ static int scan_xml_partitions(const char *fn, uint8_t *buf, size_t buf_size) {
 		if (!i) ERR_EXIT("empty partition name\n");
 		WRITE32_LE(buf + 0x48, size);
 		buf += 0x4c;
+		DBG_LOG("[%d] %s, %d\n", found, name, size);
 		found++;
 	}
+	if (p - 1 != src + size) ERR_EXIT("xml: zero byte");
 	if (stage != 2) ERR_EXIT("xml: unexpected syntax\n");
 	free(src);
 	return found;
 }
 
+static void partition_list(spdio_t *io, const char *fn) {
+	unsigned size, i, n; char name[37];
+	int ret; FILE *fo = NULL; uint8_t *p;
+
+	encode_msg(io, BSL_CMD_READ_PARTITION, NULL, 0);
+	send_msg(io);
+	recv_msg(io);
+	ret = recv_type(io);
+	if (ret != BSL_REP_READ_PARTITION)
+		ERR_EXIT("unexpected response (0x%04x)\n", ret);
+	size = READ16_BE(io->raw_buf + 2);
+	if (size % 0x4c)
+		ERR_EXIT("not divisible by struct size (0x%04x)\n", size);
+	n = size / 0x4c;
+	if (strcmp(fn, "-")) {
+		fo = fopen(fn, "wb");
+		if (!fo) ERR_EXIT("fopen failed\n");
+		fprintf(fo, "<Partitions>\n");
+	}
+	p = io->raw_buf + 4;
+	for (i = 0; i < n; i++, p += 0x4c) {
+		ret = copy_from_wstr(name, 36, (uint16_t*)p);
+		if (ret) ERR_EXIT("bad partition name\n");
+		size = READ32_LE(p + 0x48);
+		DBG_LOG("[%d] %s, %u (%u)\n", i, name, size >> 10, size);
+		if (fo) {
+			fprintf(fo, "    <Partition id=\"%s\" size=\"", name);
+			if (i + 1 == n) fprintf(fo, "0x%x\"/>\n", ~0);
+			else fprintf(fo, "%u\"/>\n", size >> 10);
+		}
+	}
+	if (fo) {
+		fprintf(fo, "</Partitions>\n");
+		fclose(fo);
+	}
+}
+
 static void repartition(spdio_t *io, const char *fn) {
 	uint8_t *buf = io->temp_buf;
 	int n = scan_xml_partitions(fn, buf, 0xffff);
+	// print_mem(stderr, io->temp_buf, n * 0x4c);
+	check_confirm("repartition");
 	encode_msg(io, BSL_CMD_REPARTITION, buf, n * 0x4c);
 	send_and_check(io);
 }
 
-static uint64_t find_partition_size(spdio_t *io, const char *name) {
-	uint32_t t32; uint64_t offset = 0, n64;
-	struct {
-		uint16_t name[36];
-		uint32_t size, size_hi; uint64_t dummy;
-	} pkt = { 0 };
-	int ret, i;
+static void erase_partition(spdio_t *io, const char *name) {
+	check_confirm("erase partition");
+	select_partition(io, name, 0, 0, BSL_CMD_ERASE_FLASH);
+	send_and_check(io);
+}
 
-	ret = copy_to_wstr(pkt.name, sizeof(pkt.name) / 2, name);
-	if (ret) ERR_EXIT("name too long\n");
-	// this size isn't checked
-	n64 = 1ll << 48;
-	WRITE32_LE(&pkt.size, n64);
-	t32 = n64 >> 32;
-	WRITE32_LE(&pkt.size_hi, t32);
+static void load_partition(spdio_t *io, const char *name,
+		const char *fn, unsigned step) {
+	uint64_t offset, len, n64;
+	unsigned mode64, n; int ret;
+	FILE *fi;
 
-	encode_msg(io, BSL_CMD_READ_START, &pkt, sizeof(pkt));
+	fi = fopen(fn, "rb");
+	if (!fi) ERR_EXIT("fopen(load) failed\n");
+
+	fseek(fi, 0, SEEK_END);
+	len = ftello(fi);
+	fseek(fi, 0, SEEK_SET);
+	DBG_LOG("file size : 0x%llx\n", (long long)len);
+
+	mode64 = len >> 32;
+	check_confirm("write partition");
+	select_partition(io, name, len, mode64, BSL_CMD_START_DATA);
 	send_and_check(io);
 
-	for (i = 47; i >= 20; i--) {
+	for (offset = 0; (n64 = len - offset); offset += n) {
+		n = n64 > step ? step : n64;
+		if (fread(io->temp_buf, 1, n, fi) != n) 
+			ERR_EXIT("fread(load) failed\n");
+		encode_msg(io, BSL_CMD_MIDST_DATA, io->temp_buf, n);
+		send_msg(io);
+		recv_msg_timeout(io, 15000);
+		if (!ret) ERR_EXIT("timeout reached\n");
+		if ((ret = recv_type(io)) != BSL_REP_ACK) {
+			DBG_LOG("unexpected response (0x%04x)\n", ret);
+			break;
+		}
+	}
+	DBG_LOG("load_partition: %s, target: 0x%llx, written: 0x%llx\n",
+			name, (long long)len, (long long)offset);
+	fclose(fi);
+	encode_msg(io, BSL_CMD_END_DATA, NULL, 0);
+	send_and_check(io);
+}
+
+static int64_t find_partition_size(spdio_t *io, const char *name) {
+	uint32_t t32; uint64_t n64; long long offset = 0;
+	int ret, i, start = 47;
+
+	select_partition(io, name, 1ll << (start + 1), 1, BSL_CMD_READ_START);
+	send_and_check(io);
+
+	for (i = start; i >= 20; i--) {
 		uint32_t data[3];
 		n64 = offset + (1ll << i) - (1 << 20);
-		WRITE32_LE(data, 16);
+		WRITE32_LE(data, 4);
 		WRITE32_LE(data + 1, n64);
 		t32 = n64 >> 32;
 		WRITE32_LE(data + 2, t32);
@@ -799,12 +944,31 @@ static uint64_t find_partition_size(spdio_t *io, const char *name) {
 		send_msg(io);
 		recv_msg(io);
 		ret = recv_type(io);
-		if (ret == BSL_REP_READ_FLASH) offset = n64 + (1 << 20);
+		if (ret != BSL_REP_READ_FLASH) continue;
+		offset = n64 + (1 << 20);
 	}
-	DBG_LOG("partition_size: %s, 0x%llx\n", name, (long long)offset);
+	DBG_LOG("partition_size: %s, 0x%llx\n", name, offset);
 	encode_msg(io, BSL_CMD_READ_END, NULL, 0);
 	send_and_check(io);
 	return offset;
+}
+
+static uint64_t str_to_size(const char *str) {
+	char *end; int shl = 0; uint64_t n;
+	n = strtoull(str, &end, 0);
+	if (*end) {
+		if (!strcmp(end, "K")) shl = 10;
+		else if (!strcmp(end, "M")) shl = 20;
+		else if (!strcmp(end, "G")) shl = 30;
+		else ERR_EXIT("unknown size suffix\n");
+	}
+	if (shl) {
+		int64_t tmp = n;
+		tmp >>= 63 - shl;
+		if (tmp && ~tmp)
+			ERR_EXIT("size overflow on multiply\n");
+	}
+	return n << shl;
 }
 
 #define REOPEN_FREQ 2
@@ -959,14 +1123,17 @@ int main(int argc, char **argv) {
 					blk_size ? blk_size : 528);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
+				send_msg(io);
 				// Feature phones respond immediately,
 				// but it may take a second for a smartphone to respond.
-				{
-					int timeout = io->timeout;
-					io->timeout = timeout > 5000 ? timeout : 5000;
-					send_and_check(io);
-					io->timeout = timeout;
-				}
+				ret = recv_msg_timeout(io, 15000);
+				if (!ret) ERR_EXIT("timeout reached\n");
+				ret = recv_type(io);
+				// Is it always bullshit?
+				if (ret == BSL_REP_INCOMPATIBLE_PARTITION)
+					DBG_LOG("FDL2: incompatible partition\n");
+				else if (ret != BSL_REP_ACK)
+					ERR_EXIT("unexpected response (0x%04x)\n", ret);
 			}
 
 			fdl_loaded++;
@@ -976,9 +1143,9 @@ int main(int argc, char **argv) {
 			const char *fn; uint64_t addr, offset, size;
 			if (argc <= 5) ERR_EXIT("bad command\n");
 
-			addr = strtoull(argv[2], NULL, 0);
-			offset = strtoull(argv[3], NULL, 0);
-			size = strtoull(argv[4], NULL, 0);
+			addr = str_to_size(argv[2]);
+			offset = str_to_size(argv[3]);
+			size = str_to_size(argv[4]);
 			fn = argv[5];
 			if ((addr | size | offset | (addr + offset + size)) >> 32)
 				ERR_EXIT("32-bit limit reached\n");
@@ -990,8 +1157,8 @@ int main(int argc, char **argv) {
 			const char *fn; uint64_t addr, size;
 			if (argc <= 4) ERR_EXIT("bad command\n");
 
-			addr = strtoull(argv[2], NULL, 0);
-			size = strtoull(argv[3], NULL, 0);
+			addr = str_to_size(argv[2]);
+			size = str_to_size(argv[3]);
 			fn = argv[4];
 			if ((addr | size | (addr + size)) >> 32)
 				ERR_EXIT("32-bit limit reached\n");
@@ -1012,14 +1179,39 @@ int main(int argc, char **argv) {
 			if (argc <= 5) ERR_EXIT("bad command\n");
 
 			name = argv[2];
-			offset = strtoull(argv[3], NULL, 0);
-			size = strtoull(argv[4], NULL, 0);
+			offset = str_to_size(argv[3]);
+			size = str_to_size(argv[4]);
 			fn = argv[5];
 			if (offset + size < offset)
 				ERR_EXIT("64-bit limit reached\n");
 			dump_partition(io, name, offset, size, fn,
-					blk_size ? blk_size : 1024);
+					blk_size ? blk_size : 4096);
 			argc -= 5; argv += 5;
+
+		} else if (!strcmp(argv[1], "partition_list")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			partition_list(io, argv[2]);
+			argc -= 2; argv += 2;
+
+		} else if (!strcmp(argv[1], "repartition")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			repartition(io, argv[2]);
+			argc -= 2; argv += 2;
+
+		} else if (!strcmp(argv[1], "erase_part")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			erase_partition(io, argv[2]);
+			argc -= 2; argv += 2;
+
+		} else if (!strcmp(argv[1], "write_part")) {
+			if (argc <= 3) ERR_EXIT("bad command\n");
+			load_partition(io, argv[2], argv[3],
+					blk_size ? blk_size : 4096);
+			argc -= 3; argv += 3;
+
+		} else if (!strcmp(argv[1], "read_pactime")) {
+			read_pactime(io);
+			argc -= 1; argv += 1;
 
 		} else if (!strcmp(argv[1], "blk_size")) {
 			if (argc <= 2) ERR_EXIT("bad command\n");
@@ -1039,9 +1231,29 @@ int main(int argc, char **argv) {
 			print_string(stderr, io->raw_buf + 4, READ16_BE(io->raw_buf + 2));
 			argc -= 1; argv += 1;
 
+		} else if (!strcmp(argv[1], "disable_transcode")) {
+			encode_msg(io, BSL_CMD_DISABLE_TRANSCODE, NULL, 0);
+			send_and_check(io);
+			io->flags &= ~FLAGS_TRANSCODE;
+			argc -= 1; argv += 1;
+
+		} else if (!strcmp(argv[1], "transcode")) {
+			unsigned a, f;
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			a = atoi(argv[2]);
+			if (a >> 1) ERR_EXIT("bad command\n");
+			f = (io->flags & ~FLAGS_TRANSCODE);
+			io->flags = f | (a ? FLAGS_TRANSCODE : 0);
+			argc -= 2; argv += 2;
+
 		} else if (!strcmp(argv[1], "keep_charge")) {
 			if (argc <= 2) ERR_EXIT("bad command\n");
 			keep_charge = atoi(argv[2]);
+			argc -= 2; argv += 2;
+
+		} else if (!strcmp(argv[1], "timeout")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			io->timeout = atoi(argv[2]);
 			argc -= 2; argv += 2;
 
 		} else if (!strcmp(argv[1], "end_data")) {

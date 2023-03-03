@@ -82,14 +82,20 @@ enum {
 	BSL_CMD_READ_CU_REF          = 0x1F, /* Read CU ref */ 
 	BSL_CMD_READ_REFINFO         = 0x20, /* Read Ref Info */
 	BSL_CMD_DISABLE_TRANSCODE    = 0x21, /* Use the non-escape function */
-	BSL_CMD_WRITE_APR_INFO       = 0x22, /* Write pac file build time to miscdata for APR */
+	BSL_CMD_WRITE_DATETIME       = 0x22, /* Write pac file build time to miscdata */
 	BSL_CMD_CUST_DUMMY           = 0x23, /* Customized Dummy */
 	BSL_CMD_READ_RF_TRANSCEIVER_TYPE = 0x24, /* Read RF transceiver type */
-	BSL_CMD_ENABLE_DEBUG_MODE    = 0x25, /* Enable debug mode */
-	BSL_CMD_DDR_CHECK            = 0x26, /* DDR check */
-	BSL_CMD_SELF_REFRESH         = 0x27, /* Self Refresh */
-	BSL_CMD_READ_NAND_BLOCK_INFO = 0x29, /* ReadNandBlockInfo */
-	BSL_CMD_SET_FIRST_MODE       = 0x2A, /* Set First Mode */
+	BSL_CMD_SET_DEBUGINFO        = 0x25,
+	BSL_CMD_DDR_CHECK            = 0x26,
+	BSL_CMD_SELF_REFRESH         = 0x27,
+	BSL_CMD_WRITE_RAW_DATA_ENABLE = 0x28, /* Init for 0x31 and 0x33 */
+	BSL_CMD_READ_NAND_BLOCK_INFO = 0x29,
+	BSL_CMD_SET_FIRST_MODE       = 0x2A,
+	BSL_CMD_READ_PARTITION       = 0x2D, /* Partition list */
+	BSL_CMD_DLOAD_RAW_START      = 0x31, /* Raw packet */
+	BSL_CMD_WRITE_FLUSH_DATA     = 0x32,
+	BSL_CMD_DLOAD_RAW_START2     = 0x33, /* Whole raw file */
+	BSL_CMD_READ_LOG             = 0x35,
 
 	BSL_CMD_CHECK_BAUD           = 0x7E, /* CheckBaud command, for internal use */
 	BSL_CMD_END_PROCESS          = 0x7F, /* End flash process */
@@ -131,5 +137,7 @@ enum {
 	BSL_REP_INCOMPATIBLE_PARTITION = 0x96,
 	BSL_REP_SIGN_VERIFY_ERROR    = 0xA6,
 	BSL_REP_READ_CHIP_UID        = 0xAB,
+	BSL_REP_READ_PARTITION       = 0xBA,
+	BSL_REP_READ_LOG             = 0xBB,
 	BSL_REP_UNSUPPORTED_COMMAND  = 0xFE,
 };
