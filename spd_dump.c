@@ -526,7 +526,7 @@ static void send_and_check(spdio_t *io) {
 	int ret;
 	send_msg(io);
 	ret = recv_msg(io);
-	if (!ret) ERR_EXIT("timeout reached\n");
+	while (!ret);
 	ret = recv_type(io);
 	if (ret != BSL_REP_ACK)
 		ERR_EXIT("unexpected response (0x%04x)\n", ret);
