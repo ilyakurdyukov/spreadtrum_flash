@@ -895,7 +895,7 @@ static void load_partition(spdio_t *io, const char *name,
 	fi = fopen(fn, "rb");
 	if (!fi) ERR_EXIT("fopen(load) failed\n");
 
-	fseek(fi, 0, SEEK_END);
+	fseeko(fi, 0, SEEK_END);
 	len = ftello(fi);
 	fseek(fi, 0, SEEK_SET);
 	DBG_LOG("file size : 0x%llx\n", (long long)len);
