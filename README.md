@@ -90,7 +90,7 @@ Here's the explanation:
 
 `keep_charge 1` - to keep charging while FDL is active.  
 `fdl <fdl-image> <base>` - loads the FDL into the phone's memory at the specified address and executes the code.  
-`disable_transcode` - disables "transcode" (bytes with values `0x7d` or `0x7e` are prepended with a `0x7e` byte) when sending and receiving data, some FDLs don't work properly if transcode is not disabled.  
+`disable_transcode` - disables "transcode" (bytes with values `0x7d` or `0x7e` are prepended with a `0x7d` byte) when sending and receiving data, some FDLs don't work properly if transcode is not disabled.  
 `partition_list <partition.xml>` - saves the current partition list in .xml format. Also prints as text.  
 `blk_size <size>` - changes the default block size for read/write commands, may speed up the process (but some FDL may not support too large sizes).  
 `read_part <partition_name> <offset> <size> <output_file>` - dumps the specified partition at the selected offset.  
@@ -139,3 +139,4 @@ SUBSYSTEMS=="usb", ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="0003", MODE="0666
 
 * I only found "Opus Spreadtrum" after I wrote this tool using information from other source code. So now there is another dump tool, but written in C.
 * Also I have the [tool](https://github.com/ilyakurdyukov/mediatek_flash) for MediaTek chipsets.
+
