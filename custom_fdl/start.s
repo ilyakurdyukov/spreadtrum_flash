@@ -53,3 +53,9 @@ CODE32_FN __gnu_thumb1_case_uqi
 	add	lr, lr, r12, lsl #1
 	bx	lr
 
+CODE32_FN __gnu_thumb1_case_uhi
+	add	r12, r0, lr, lsr #1
+	ldrh	r12, [r12, r12]
+	add	lr, lr, r12, lsl #1
+	bx	lr
+
