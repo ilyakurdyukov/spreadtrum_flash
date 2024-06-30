@@ -24,18 +24,33 @@ static void sc6530_init_smc(void) {
 	DELAY(100)
 }
 
-static void sc6530_init_first(void) {
+static void sc6530_init_freq(void) {
 	uint32_t a;
+#if 0 // what's this?
 	MEM4(0x8b0000a0) = -2;
 	MEM4(0x8b0000a8) = -2;
+#endif
 	// CPU freq
 	a = MEM4(0x8b000040);
+	MEM4(0x8b000040) = a |= 4;
 	MEM4(0x8b000040) = (a & ~3) | 1;	// 208 MHz
 	DELAY(100)
 }
 
+static void sc6530_init_adi(void) {
+	MEM4(0x8b0000a0) = 1 << 24; // ADI enable
+	// ADI reset
+	MEM4(0x8b000060) = 1 << 19;
+	DELAY(100)
+	MEM4(0x8b000064) = 1 << 19;
+	// init analog
+	MEM4(0x82000000) &= ~(1 << 4);
+	MEM4(0x82000004) = 0x55000;
+}
+
 static void init_sc6530(void) {
-	sc6530_init_first();
+	sc6530_init_freq();
 	sc6530_init_smc();
+	sc6530_init_adi();
 }
 

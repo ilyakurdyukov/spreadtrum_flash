@@ -147,11 +147,11 @@ static void sc6531e_init_smc() {
 #undef SMC_CONFIG
 #undef smc_config_t
 
-static void sc6531e_init_first() {
+static void sc6531e_init_freq() {
 	uint32_t a;
 	// CPU freq
 	a = MEM4(0x8b00004c);
-	MEM4(0x8b00004c) = a & ~4;
+	MEM4(0x8b00004c) = a &= ~4;
 	MEM4(0x8b00004c) = a | 3;	// 208 MHz
 	DELAY(100)
 	MEM4(0x8d20002c) = (MEM4(0x8d20002c) & ~7) | 2;
@@ -159,8 +159,9 @@ static void sc6531e_init_first() {
 	DELAY(100)
 }
 
-static void sc6531e_init_power() {
-	MEM4(0x8b0010a8) = 1 << 24;
+static void sc6531e_init_adi() {
+	MEM4(0x8b0010a8) = 1 << 24; // ADI enable
+	// ADI reset
 	MEM4(0x8b001068) = 1 << 19;
 	DELAY(100)
 	MEM4(0x8b002068) = 1 << 19;
@@ -170,8 +171,8 @@ static void sc6531e_init_power() {
 }
 
 static void init_sc6531e(void) {
-	sc6531e_init_first();
+	sc6531e_init_freq();
 	sc6531e_init_smc();
-	sc6531e_init_power();
+	sc6531e_init_adi();
 }
 

@@ -156,19 +156,21 @@ static void sc6531da_init_smc(void) {
 }
 #undef get_freq_2
 
-static void sc6531da_init_first(void) {
+static void sc6531da_init_freq(void) {
 	uint32_t a;
 	// CPU freq
-	a = MEM4(0x8b00004c);
-	MEM4(0x8b00004c) = a & ~4;
+	a = MEM4(0x8b00004c) | 4;
+	if (MEM4(0x205003fc) == 0x65310001) a &= ~4;
+	MEM4(0x8b00004c) = a;
 	MEM4(0x8b00004c) = a | 3;	// 312 MHz
 	DELAY(100)
 	MEM4(0x8b000044) = (MEM4(0x8b000044) & ~(3 << 19)) | 1 << 19;
 	DELAY(100)
 }
 
-static void sc6531da_init_power(void) {
-	MEM4(0x8b0000a0) = 1 << 24;
+static void sc6531da_init_adi(void) {
+	MEM4(0x8b0000a0) = 1 << 24; // ADI enable
+	// ADI reset
 	MEM4(0x8b000060) = 1 << 19;
 	DELAY(100)
 	MEM4(0x8b000064) = 1 << 19;
@@ -178,8 +180,8 @@ static void sc6531da_init_power(void) {
 }
 
 static void init_sc6531da(void) {
-	sc6531da_init_first();
+	sc6531da_init_freq();
 	sc6531da_init_smc();
-	sc6531da_init_power();
+	sc6531da_init_adi();
 }
 
