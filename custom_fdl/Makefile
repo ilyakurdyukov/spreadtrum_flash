@@ -20,8 +20,11 @@ else
 CFLAGS = -Os
 endif
 
-CFLAGS += -Wall -fno-PIE -ffreestanding -march=armv5te -mthumb $(EXTRA_CFLAGS) -fno-strict-aliasing
-LFLAGS = -nostartfiles -nodefaultlibs -nostdlib -Wl,-T,$(LDSCRIPT) -Wl,--gc-sections -Wl,-z,notext
+CFLAGS += -Wall -funsigned-char
+CFLAGS += -fno-PIE -ffreestanding -march=armv5te -mthumb $(EXTRA_CFLAGS) -fno-strict-aliasing
+CFLAGS += -fomit-frame-pointer
+CFLAGS += -ffunction-sections -fdata-sections
+LFLAGS = -static -nostartfiles -nodefaultlibs -nostdlib -Wl,-T,$(LDSCRIPT) -Wl,--gc-sections -Wl,-z,notext
 CFLAGS += -DCHIP=$(CHIP)
 
 # Clang's LTO doesn't work with the GCC toolchain

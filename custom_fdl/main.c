@@ -95,9 +95,12 @@ void dl_main(void) {
 #else
 	static char version[] = { "Custom FDL1: CHIP ID = 0x00000000" };
 	{
-		uint32_t i = 25, t;
-		for (t = chip_id; t; t <<= 4)
-			version[i++] = "0123456789abcdef"[t >> 28];
+		uint32_t i = 25, t, a;
+		for (t = chip_id; t; t <<= 4) {
+			a = t >> 28;
+			if (a >= 10) a += 'a' - '0' - 10;
+			version[i++] = a + '0';
+		}
 	}
 #endif
 
