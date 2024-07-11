@@ -208,14 +208,19 @@ static void id2str(char *buf, uint32_t val) {
 	*buf = 0;
 }
 
-static void scan_fw(uint8_t *buf, unsigned size) {
+static int drps_decode(uint8_t *mem, size_t size,
+		unsigned drps_offs, unsigned index, const char *outfn);
+
+static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 	unsigned i, size_req = 0x1c;
-	unsigned size2;
+	unsigned size2, ps_len;
+	char name[128], drps_cnt[4] = { 0 };
 	if (size >= 0x24 && *(uint32_t*)(buf + 0x20) == 0x36353632)
 		printf("0x20: found SC6531E firmware marker\n");
 	size &= ~3;
-	if (size > size_req)
-	for (i = 0; i < size - size_req; i += 4) {
+	if (size < size_req) return;
+	ps_len = size;
+	for (i = 0; i < size - size_req + 1; i += 4) {
 		uint32_t *p = (uint32_t*)(buf + i);
 		do {
 			if (p[0] != 0xe8ba000f) break;
@@ -233,7 +238,7 @@ static void scan_fw(uint8_t *buf, unsigned size) {
 		} while (0);
 
 		do {
-			uint32_t *p2, n;
+			uint32_t *p2, j, n;
 			if (p[0] != 0x53505244) break;
 			if (p[1] != 0) break;
 			n = p[3];
@@ -243,14 +248,28 @@ static void scan_fw(uint8_t *buf, unsigned size) {
 			if (size2 < p[2]) break;
 			size2 -= p[2];
 			p2 = (uint32_t*)((uint8_t*)p + p[2]);
-			for (; n--; p2 += 5) {
-				char name[17];
+			if (ps_len > i) ps_len = i;
+			for (j = 0; j < n; j++, p2 += 5) {
 				if (size2 < 0x14) break;
 				size2 -= 0x14;
 				if (p2[0] != 0x424c4f43) break;
 				id2str(name, p2[1]);
 				printf("0x%x: COLB, name = \"%s\", offs = 0x%x (0x%x), size = 0x%x, 0x%x\n",
 						(unsigned)((uint8_t*)p2 - buf), name, p2[2], i + p2[2], p2[3], p2[4]);
+#if WITH_LZMADEC
+				if (flags & 1) {
+					const char *s = "unknown"; int k = 0;
+					switch (p2[1]) {
+					case 0x494d4147: s = "kern"; k = 1; break;
+					case 0x75736572: s = "user"; k = 2; break;
+					case 0x7253736f: s = "rsrc"; k = 3; break;
+					}
+					k = drps_cnt[k]++;
+					if (!k) snprintf(name, sizeof(name), "%s.bin", s);
+					else snprintf(name, sizeof(name), "%s%u.bin", s, k);
+					drps_decode(buf, size, i, j, name);
+				}
+#endif
 			}
 		} while (0);
 
@@ -270,6 +289,14 @@ static void scan_fw(uint8_t *buf, unsigned size) {
 				if ((a ^ 0x8c000000) >> 12 && (a ^ 0x82001000) >> 12) break;
 			}
 		} while (0);
+	}
+	if ((flags & 1) && ps_len < size) {
+		FILE *fo = fopen("ps.bin", "wb");
+		if (!fo) fprintf(stderr, "fopen(output) failed\n");
+		else {
+			fwrite(buf, 1, ps_len, fo);
+			fclose(fo);
+		}
 	}
 }
 
@@ -297,7 +324,7 @@ static int run_decoder(uint8_t *mem, size_t size, int argc, char **argv,
 		src_addr, src_addr + src_size, src_size, result, dst_size);
 
 	fo = fopen(outfn, "wb");
-	if (!fo) ERR_EXIT("fopen(output) failed\n");
+	if (!fo) fprintf(stderr, "fopen(output) failed\n");
 	else {
 		fwrite(dst, 1, result, fo);
 		fclose(fo);
@@ -416,7 +443,7 @@ int main(int argc, char **argv) {
 
 	while (argc > 1) {
 		if (!strcmp(argv[1], "scan")) {
-			scan_fw(mem, size);
+			scan_fw(mem, size, 0);
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "copy")) {
 			if (run_decoder(mem, size, argc, argv, &decode_copy)) return 1;
@@ -428,6 +455,9 @@ int main(int argc, char **argv) {
 			if (run_decoder(mem, size, argc, argv, &sprd_lzdec3)) return 1;
 			argc -= 4; argv += 4;
 #if WITH_LZMADEC
+		} else if (!strcmp(argv[1], "unpack")) {
+			scan_fw(mem, size, 1);
+			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "lzmadec")) {
 			if (run_decoder(mem, size, argc, argv, &decode_lzma)) return 1;
 			argc -= 4; argv += 4;
