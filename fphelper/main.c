@@ -3,6 +3,42 @@
 #include <string.h>
 #include <stdint.h>
 
+#if WITH_LZMADEC
+static int lzma_sprd = 0;
+#define LZMA_SPRD_HACK lzma_sprd
+#include "lzma/LzmaDecode.c"
+
+static size_t decode_lzma_impl(const uint8_t *src, size_t *src_size, uint8_t *dst, size_t dst_size) {
+	size_t inSizeProcessed = 0, outSizeProcessed = 0;
+	size_t size = *src_size; int ret;
+	if (size > 5 + 8) do {
+		CLzmaDecoderState decoder = { 0 };
+		ret = LzmaDecodeProperties(&decoder.Properties, src, size);
+		if (ret != LZMA_RESULT_OK) break;
+		ret = LzmaGetNumProbs(&decoder.Properties);
+		decoder.Probs = malloc(sizeof(CProb) * ret);
+		if (!decoder.Probs) break;
+		ret = LzmaDecode(&decoder,
+			src + 5 + 8, size - 5 - 8, &inSizeProcessed,
+			dst, dst_size, &outSizeProcessed);
+		free(decoder.Probs);
+		inSizeProcessed += 5 + 8;
+	} while (0);
+	*src_size = inSizeProcessed;
+	return outSizeProcessed;
+}
+
+static size_t decode_lzma(const uint8_t *src, size_t *src_size, uint8_t *dst, size_t dst_size) {
+	lzma_sprd = 0;
+	return decode_lzma_impl(src, src_size, dst, dst_size);
+}
+
+static size_t sprd_lzmadec(const uint8_t *src, size_t *src_size, uint8_t *dst, size_t dst_size) {
+	lzma_sprd = 1;
+	return decode_lzma_impl(src, src_size, dst, dst_size);
+}
+#endif
+
 #define END() do { \
 	*src_size = src - src_start; \
 	return dst - dst_start; \
@@ -112,6 +148,12 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 	return buf;
 }
 
+#define READ32_LE(p) ( \
+	((uint8_t*)(p))[0] | \
+	((uint8_t*)(p))[1] << 8 | \
+	((uint8_t*)(p))[2] << 16 | \
+	((uint8_t*)(p))[3] << 24)
+
 static void print_init_table(uint8_t *buf, unsigned size, uint32_t o1) {
 	uint32_t *p = (uint32_t*)(buf + o1);
 	uint32_t o2, o3, i, n, size2;
@@ -156,6 +198,16 @@ static void print_init_table(uint8_t *buf, unsigned size, uint32_t o1) {
 	printf("\n");
 }
 
+static void id2str(char *buf, uint32_t val) {
+	int i;
+	for (i = 0; i < 4; i++) {
+		int a = val >> 24; val <<= 8;
+		if (a >= 32 && a < 127) *buf++ = a;
+		else sprintf(buf, "\\x%02x", a), buf += 4;
+	}
+	*buf = 0;
+}
+
 static void scan_fw(uint8_t *buf, unsigned size) {
 	unsigned i, size_req = 0x1c;
 	unsigned size2;
@@ -192,11 +244,13 @@ static void scan_fw(uint8_t *buf, unsigned size) {
 			size2 -= p[2];
 			p2 = (uint32_t*)((uint8_t*)p + p[2]);
 			for (; n--; p2 += 5) {
+				char name[17];
 				if (size2 < 0x14) break;
 				size2 -= 0x14;
 				if (p2[0] != 0x424c4f43) break;
-				printf("0x%x: COLB, name = 0x%x, offs = 0x%x (0x%x), size = 0x%x, 0x%x\n",
-						(unsigned)((uint8_t*)p2 - buf), p2[1], p2[2], i + p2[2], p2[3], p2[4]);
+				id2str(name, p2[1]);
+				printf("0x%x: COLB, name = \"%s\", offs = 0x%x (0x%x), size = 0x%x, 0x%x\n",
+						(unsigned)((uint8_t*)p2 - buf), name, p2[2], i + p2[2], p2[3], p2[4]);
 			}
 		} while (0);
 
@@ -248,8 +302,107 @@ static int run_decoder(uint8_t *mem, size_t size, int argc, char **argv,
 		fwrite(dst, 1, result, fo);
 		fclose(fo);
 	}
+	free(dst);
 	return 0;
 }
+
+#define FATAL() ERR_EXIT("error at %s:%u\n", __func__, __LINE__);
+
+#if WITH_LZMADEC
+static int drps_decode(uint8_t *mem, size_t size,
+		unsigned drps_offs, unsigned index, const char *outfn) {
+	size_t src_addr, src_size, result, dst_size;
+	uint8_t *dst; FILE *fo;
+	unsigned drps_num, drps_size, i;
+	uint32_t *p, offs;
+
+	if (size < drps_offs) FATAL();
+	size -= drps_offs;
+	if (size < 0x10) FATAL();
+	mem += drps_offs;
+	p = (uint32_t*)mem;
+	if (p[0] != 0x53505244) FATAL();
+	drps_size = p[2];
+	if (size < drps_size) FATAL();
+	size -= drps_size;
+
+	drps_num = p[3];
+	if ((drps_num - 1) >> 8) FATAL();
+	if (index >= drps_num) FATAL();
+	if (size < (index + 1) * 0x14) FATAL();
+
+	p = (uint32_t*)(mem + drps_size);
+	for (i = 0; i <= index; i++, p += 5)
+		if (p[0] != 0x424c4f43) FATAL();
+	p -= 5;
+	dst_size = p[4];
+	if ((dst_size - 1) >> 28) FATAL();
+	dst = malloc(dst_size);
+	if (!dst) ERR_EXIT("malloc failed\n");
+	{
+		size_t size2;
+		uint32_t colb_offs = p[2];
+		uint32_t colb_size = p[3];
+		size_t src_addr = drps_offs + colb_offs;
+		if (colb_offs < 0x10) FATAL();
+		if (colb_size < 5 + 8) FATAL();
+		if (colb_offs > drps_size) FATAL();
+		drps_size -= colb_offs;
+		if (drps_size < colb_size) FATAL();
+		mem += colb_offs;
+		p = (uint32_t*)mem;
+
+		fo = fopen(outfn, "wb");
+		if (!fo) ERR_EXIT("fopen(output) failed\n");
+
+		if (*p == 0x4e504143) {
+			uint32_t data_size = p[2], num, offs, next;
+			if (colb_size < 0x10) FATAL();
+			num = p[3];
+			printf("0x%x: CAPN, 0x%x, size = 0x%x, num = %u\n",
+					(unsigned)src_addr, p[1], data_size, num);
+			if (data_size < 0x10 || (num - 1) >> 24) FATAL();
+			if (colb_size < data_size) FATAL();
+			colb_size -= data_size;
+			if (colb_size != num * 4) FATAL();
+			p = (uint32_t*)((uint8_t*)p + data_size);
+			offs = p[0];
+			if (offs < 0x10) FATAL();
+			for (i = 0; i < num; i++, offs = next) {
+				size_t size2;
+				next = i + 1 < num ? p[i + 1] : data_size;
+				if (next < offs || next > data_size) FATAL();
+				src_size = next - offs;
+
+#define RUN_LZMADEC(mem) \
+	if (src_size < 5 + 8) FATAL(); \
+	size2 = READ32_LE(mem + 5 + 4); \
+	if (size2) FATAL(); \
+	size2 = READ32_LE(mem + 5); \
+	if (size2 > dst_size) FATAL(); \
+	result = sprd_lzmadec(mem, &src_size, dst, size2); \
+	fwrite(dst, 1, result, fo);
+
+				RUN_LZMADEC(mem + offs)
+				if (result != size2) {
+					printf("src: 0x%zx-0x%zx, size = 0x%zx; dst: size = %zd / %zd\n",
+							src_addr + offs, src_addr + offs + src_size, src_size, result, size2);
+					FATAL();
+				}
+			}
+		} else {
+			src_size = colb_size;
+			RUN_LZMADEC(mem)
+			printf("src: 0x%zx-0x%zx, size = 0x%zx; dst: size = %zd / %zd\n",
+					src_addr, src_addr + src_size, src_size, result, size2);
+#undef RUN_LZMADEC
+		}
+		fclose(fo);
+	}
+	free(dst);
+	return 0;
+}
+#endif
 
 int main(int argc, char **argv) {
 	uint8_t *mem; size_t size = 0;
@@ -274,6 +427,22 @@ int main(int argc, char **argv) {
 		} else if (!strcmp(argv[1], "lzdec3")) {
 			if (run_decoder(mem, size, argc, argv, &sprd_lzdec3)) return 1;
 			argc -= 4; argv += 4;
+#if WITH_LZMADEC
+		} else if (!strcmp(argv[1], "lzmadec")) {
+			if (run_decoder(mem, size, argc, argv, &decode_lzma)) return 1;
+			argc -= 4; argv += 4;
+		} else if (!strcmp(argv[1], "lzmadec_sprd")) {
+			if (run_decoder(mem, size, argc, argv, &sprd_lzmadec)) return 1;
+			argc -= 4; argv += 4;
+		} else if (!strcmp(argv[1], "drps_dec")) {
+			unsigned offs, index; const char *outfn;
+			if (argc <= 4) ERR_EXIT("bad command\n");
+			offs = strtol(argv[2], NULL, 0);
+			index = strtol(argv[3], NULL, 0);
+			outfn = argv[4];
+			if (drps_decode(mem, size, offs, index, outfn)) return 1;
+			argc -= 4; argv += 4;
+#endif
 		} else {
 			ERR_EXIT("unknown command\n");
 		}

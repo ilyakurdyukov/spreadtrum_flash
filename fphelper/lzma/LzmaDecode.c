@@ -296,6 +296,9 @@ int LzmaDecode(CLzmaDecoderState *vs,
         )
         & literalPosMask) << lc) + (previousByte >> (8 - lc))));
 
+#ifdef LZMA_SPRD_HACK
+      if (!LZMA_SPRD_HACK)
+#endif
       if (state >= kNumLitStates)
       {
         int matchByte;

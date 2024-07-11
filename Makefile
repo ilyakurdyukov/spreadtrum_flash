@@ -15,4 +15,4 @@ clean:
 	$(RM) $(APPNAME)
 
 $(APPNAME): $(APPNAME).c spd_cmd.h
-	$(CC) -s $(CFLAGS) -o $@ $^ $(LIBS)
+	$(CC) -s $(CFLAGS) -o $@ $< $(LIBS)
