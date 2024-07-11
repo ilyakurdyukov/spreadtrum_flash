@@ -158,6 +158,9 @@ static void print_init_table(uint8_t *buf, unsigned size, uint32_t o1) {
 
 static void scan_fw(uint8_t *buf, unsigned size) {
 	unsigned i, size_req = 0x1c;
+	unsigned size2;
+	if (size >= 0x24 && *(uint32_t*)(buf + 0x20) == 0x36353632)
+		printf("0x20: found SC6531E firmware marker\n");
 	size &= ~3;
 	if (size > size_req)
 	for (i = 0; i < size - size_req; i += 4) {
@@ -172,11 +175,37 @@ static void scan_fw(uint8_t *buf, unsigned size) {
 		} while (0);
 
 		do {
-			size_t size2 = ((size - i) >> 3) - 3;
+			if (p[0] != 0x50415254) break;
+			if (p[1] != 0x494d4147) break;
+			printf("0x%x: TRAPGAMI, kern = 0x%x, user = 0x%x\n", i, p[2], p[3]);
+		} while (0);
+
+		do {
+			uint32_t *p2, n;
+			if (p[0] != 0x53505244) break;
+			if (p[1] != 0) break;
+			n = p[3];
+			if ((n - 1) >> 5) break;
+			printf("0x%x: DRPS, size = 0x%x, num = %u\n", i, p[2], n);
+			size2 = size - i;
+			if (size2 < p[2]) break;
+			size2 -= p[2];
+			p2 = (uint32_t*)((uint8_t*)p + p[2]);
+			for (; n--; p2 += 5) {
+				if (size2 < 0x14) break;
+				size2 -= 0x14;
+				if (p2[0] != 0x424c4f43) break;
+				printf("0x%x: COLB, name = 0x%x, offs = 0x%x (0x%x), size = 0x%x, 0x%x\n",
+						(unsigned)((uint8_t*)p2 - buf), p2[1], p2[2], i + p2[2], p2[3], p2[4]);
+			}
+		} while (0);
+
+		do {
 			uint32_t *p2 = p + 6, a;
 			if ((p[0] ^ 0x8c000000) >> 12) break;
 			if ((p[2] ^ 0x8c000000) >> 12) break;
 			if ((p[4] ^ 0x8c000000) >> 12) break;
+			size2 = ((size - i) >> 3) - 3;
 			for (; size2--; p2 += 2) {
 				if ((a = p2[0]) == ~0u && p2[1] == ~0u) {
 					unsigned end = (uint8_t*)(p2 + 2) - buf;
