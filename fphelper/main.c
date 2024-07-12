@@ -448,21 +448,19 @@ static void sms_decode(uint8_t *p, unsigned len) {
 		// printf("sms len: %u\n", n);
 		len = end - p;
 		if (len < n) break;
-#if 1
-		// User Data Header
-		if (n >= 6 && p[0] == 5 && p[1] == 0 && p[2] == 3) {
-#else
+
 		// some SMS contain UDH even without this bit
+		if (n >= 6 && p[0] == 5 && p[1] == 0 && p[2] == 3)
+			pdu_type |= 0x40;
+
+		// User Data Header
 		if (pdu_type & 0x40) {
-			if (n < 6 || p[0] != 5 || p[1] !== 0) break;
-			if (p[2] != 3) break;
-#endif
-			printf("sms part: %u / %u (ref = 0x%02x)\n", p[5], p[4], p[3]);
-			n -= 6; p += 6;
-		}
-		if (n >= 7 && p[0] == 6 && p[1] == 8 && p[2] == 4) {
-			printf("sms part: %u / %u (ref = 0x%04x)\n", p[6], p[5], p[3] << 8 | p[4]);
-			n -= 7; p += 7;
+			if (n < 1 || n < (a = p[0] + 1)) break;
+			if (p[1] == 0 && p[2] == 3)
+				printf("sms part: %u / %u (ref = 0x%02x)\n", p[5], p[4], p[3]);
+			if (p[1] == 8 && p[2] == 4)
+				printf("sms part: %u / %u (ref = 0x%04x)\n", p[6], p[5], p[3] << 8 | p[4]);
+			n -= a; p += a;
 		}
 
 		if ((dcs & 0xc) == 8) { // utf16
