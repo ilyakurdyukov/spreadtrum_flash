@@ -353,7 +353,7 @@ static unsigned fat12_size(uint8_t *p) {
 	return 0;
 }
 
-static void prod_str(uint8_t *buf, int n) {
+static void prodinfo_str(uint8_t *buf, int n) {
 	int i;
 	for (i = 0; i < n; i++) {
 		int a = buf[i];
@@ -361,6 +361,123 @@ static void prod_str(uint8_t *buf, int n) {
 		if (a >= 32 && a < 127) putchar(a);
 		else printf("\\x%02x", a);
 	}
+}
+
+static void safe_print_utf16(unsigned a) {
+	unsigned b;
+	if (a >= 0x80) {
+		if (a >= 0x800) {
+			if ((a - 0xd800) < 0x800) {
+				printf("\\u%x", a);
+				return;
+			}
+			putchar(a >> 12 | 0xe0);
+			b = (a >> 6 & 0x3f) | 0x80;
+		} else b = a >> 6 | 0xc0;
+		putchar(b);
+		a = (a & 0x3f) | 0x80;
+	} else {
+		if (a < 0x20) {
+			if (a == '\n') printf("\\n");
+			else printf("\\x%02x", a);
+			return;
+		}
+		if (a == '"') putchar('\\');
+	}
+	putchar(a);
+}
+
+static uint8_t* sms_addr_decode(uint8_t *d, uint8_t *p) {
+	unsigned a, i, k, n;
+	const char *conv = "0123456789*#abc";
+	n = *p++; /* sender length */
+	if ((n - 1) >= 20) return NULL;
+	// len -= (n + 1) >> 1;
+	a = *p++; /* sender type */
+	if (a == 0xd0) {
+		for (a = i = k = 0; i < n; i++) {
+			if (!(i & 1)) a |= *p++ << k, k += 8;
+			if (k >= 7) *d++ = a & 127, a >>= 7, k -= 7;
+		}
+	} else if ((a | 0x10) == 0x91) {
+		if (a == 0x91) *d++ = '+';
+		for (i = 0; i < n; i++) {
+			a = *p++; k = a & 15; a >>= 4;
+			if (k > 14) return NULL;
+			*d++ = conv[k];
+			if (++i >= n) break;
+			if (a > 14) return NULL;
+			*d++ = conv[a];
+		}
+	} else return NULL;
+	*d = 0;
+	return p;
+}
+
+static void sms_decode(uint8_t *p, unsigned len) {
+	uint8_t buf[22], *end = p + len;
+	//print_mem(stdout, p, len);
+	do {
+		unsigned a, k, i, n, dcs, pdu_type;
+		p += 0x12; /* is it constant? */
+		pdu_type = *p++;
+		if (pdu_type & 2) break; /* unknown message type */
+		if (pdu_type & 1) { /* sms-submit */
+			p++; /* sms-sequence */
+		}
+		p = sms_addr_decode(buf, p);
+		if (!p) break;
+		printf("sms %s: %s\n", pdu_type & 1 ? "receiver" : "sender", buf);
+
+		dcs = p[1]; // Data Coding Scheme
+
+		if (p[2] != 0xff) {
+			for (i = 0; i < 7; i++) {
+				a = p[2 + i]; k = a & 15; a >>= 4;
+				if ((i < 6 && k > 9) || a > 9) return;
+				buf[i] = a + k * 10;
+			}
+			a = buf[0]; k = buf[6]; n = '+';
+			if (k >= 80) k -= 80, n = '-';
+			printf("sms time stamp: %u.%02u.%02u %02u:%02u:%02u GMT%c%u:%02u\n",
+					a + (a < 80 ? 2000 : 1900), buf[1], buf[2],
+					buf[3], buf[4], buf[5], n, k >> 2, (k & 3) * 15);
+			p += 6;
+		}
+		n = p[3]; p += 4;
+		// printf("sms len: %u\n", n);
+		len = end - p;
+		if (len < n) break;
+#if 1
+		// User Data Header
+		if (n >= 6 && p[0] == 5 && p[1] == 0) {
+#else
+		// some SMS contain UDH even without this bit
+		if (pdu_type & 0x40) {
+			if (n < 6 || p[0] != 5 || p[1] !== 0) break;
+#endif
+			if (p[2] != 3) break;
+			printf("sms part: %u / %u (ref = %u)\n", p[5], p[4], p[3]);
+			n -= 6; p += 6;
+		}
+		if ((dcs & 0xc) == 8) { // utf16
+			if (n & 1) break;
+			n >>= 1;
+		}
+		printf("sms message: \"");
+		if ((dcs & 0xc) == 0) { // 7-bit
+			for (a = i = k = 0; i < n; i++) {
+				if (k < 7) a |= *p++ << k, k += 8;
+				safe_print_utf16(a & 127); a >>= 7; k -= 7;
+			}
+		} else if ((dcs & 0xc) == 8) { // utf16
+			for (i = 0; i < n; i++) {
+				a = p[0] << 8 | p[1]; p += 2;
+				safe_print_utf16(a);
+			}
+		}
+		printf("\"\n");
+	} while (0);
 }
 
 static void scan_data(uint8_t *buf, unsigned size, int flags) {
@@ -382,12 +499,12 @@ static void scan_data(uint8_t *buf, unsigned size, int flags) {
 			if (*(uint32_t*)(p2 + 0x34) > 10) break;
 			if (*(uint32_t*)(p2 + 0xdc) != 0x53534150) break;
 			printf("0x%x: prodinfo, end = 0x%08x\n", i, *(uint32_t*)(p2 + 0xfc));
-			printf("prodinfo serial: \""); prod_str(p2 + 4, 0x30); printf("\"\n");
+			printf("prodinfo serial: \""); prodinfo_str(p2 + 4, 0x30); printf("\"\n");
 			n = *(uint32_t*)(p2 + 0x34);
 			if (n) {
 				printf("prodinfo features:\n");
 				for (j = 0; j < n; j++) {
-					printf("%u: \"", j); prod_str(p2 + 0x38 + j * 10, 10); printf("\"\n");
+					printf("%u: \"", j); prodinfo_str(p2 + 0x38 + j * 10, 10); printf("\"\n");
 				}
 				printf("\n");
 			}
@@ -428,9 +545,11 @@ static void scan_data(uint8_t *buf, unsigned size, int flags) {
 				p2 = (uint16_t*)(buf + j);
 				a = p2[0]; b = p2[2]; n = p2[3];
 				printf("0x%x: %sid = %u, size = %u\n", j, !a ? "deleted, " : "", b, p2[3]);
-				if (n == 512) {
+				if (n >= 512 && !(n & 511)) {
 					a = fat12_size((uint8_t*)p2 + 8);
 					if (a) printf("0x%x: FAT12 header, sectors = %u\n", j + 8, a);
+				} else if (n == 232) {
+					sms_decode((uint8_t*)p2 + 8, 232);
 				}
 				n = 8 + ((n + 1) & ~1);
 			}
