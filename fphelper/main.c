@@ -19,8 +19,8 @@ static size_t decode_lzma_impl(const uint8_t *src, size_t *src_size, uint8_t *ds
 		decoder.Probs = malloc(sizeof(CProb) * ret);
 		if (!decoder.Probs) break;
 		ret = LzmaDecode(&decoder,
-			src + 5 + 8, size - 5 - 8, &inSizeProcessed,
-			dst, dst_size, &outSizeProcessed);
+				src + 5 + 8, size - 5 - 8, &inSizeProcessed,
+				dst, dst_size, &outSizeProcessed);
 		free(decoder.Probs);
 		inSizeProcessed += 5 + 8;
 	} while (0);
@@ -154,48 +154,82 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 	((uint8_t*)(p))[2] << 16 | \
 	((uint8_t*)(p))[3] << 24)
 
-static void print_init_table(uint8_t *buf, unsigned size, uint32_t o1) {
-	uint32_t *p = (uint32_t*)(buf + o1);
+static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int flags) {
+	uint32_t *p = (uint32_t*)(buf + o1), *p2;
 	uint32_t o2, o3, i, n, size2;
 	uint32_t lz_addr = 0, lz_type = -1;
 	uint32_t copy_addr = 0, zero_addr = 0;
+	uint32_t fwaddr = 0, found_fwaddr = 0;
 
 	size2 = size - o1 - 8;
 	o2 = *p++; o3 = *p++;
-	if (o3 > (size - o1)) return;
+	if (o3 > (size - o1)) return 0;
 	o2 += o1; o3 += o1;
-	printf("init_table: ref = 0x%x, start = 0x%x, end = 0x%x\n", o1, o2, o3);
+	printf("0x%x: init_table, start = 0x%x, end = 0x%x\n", o1, o2, o3);
 
 	if (size2 >= 0x10 && p[0] == 0xe28fc001) {
 		unsigned n = 0;
 		lz_addr = (uint8_t*)p - buf;
 		if (p[3] == 0x075c3001) lz_type = 3, n = 0x5c;
 		if (p[3] == 0x079c3001) lz_type = 2, n = 0x60;
-		if (n) printf("init_lzdec%u: 0x%x\n", lz_type, lz_addr);
-		if (size2 < n) return;
+		if (n) printf("0x%x: init_lzdec%u\n", lz_addr, lz_type);
+		if (size2 < n) return 0;
 		size2 -= n; p += n >> 2;
 	}
 	if (size2 >= 0x28 && p[0] == 0xe2522010) {
 		unsigned n = 0x28;
 		copy_addr = (uint8_t*)p - buf;
 		size2 -= n; p += n >> 2;
-		printf("init_copy: 0x%x\n", copy_addr);
+		printf("0x%x: init_copy\n", copy_addr);
 	}
 	if (size2 >= 0x38 && p[0] == 0xe3b03000) {
 		unsigned n = 0x38;
 		zero_addr = (uint8_t*)p - buf;
 		size2 -= n; p += n >> 2;
-		printf("init_zero: 0x%x\n", zero_addr);
+		printf("0x%x: init_zero\n", zero_addr);
 	}
 
 	n = o3 - o2;
-	if (o2 >= o3 || (n & 0xf) || ((n >> 4) - 1) >= 20) return;
+	if (o2 >= o3 || (n & 0xf) || ((n >> 4) - 1) >= 20) return 0;
 	p = (uint32_t*)(buf + o2);
+	n >>= 4;
 
-	for (i = 0; i < (n >> 4); i++, p += 4)
+	{
+		uint32_t buf[3] = { lz_addr, copy_addr, zero_addr };
+		unsigned j, k, x = 0;
+		for (j = 0; j < 3; j++) {
+			uint32_t a = buf[j];
+			if (!a) continue;
+			a = p[3] - a;
+			for (i = 0; i < n; i++) {
+				for (k = 0; k < 3; k++)
+					if (buf[k] && p[i * 4 + 3] - a == buf[k]) break;
+				if (k == 3) break;
+			}
+			if (i == n) x |= 1 << j, fwaddr = a;
+		}
+		if (x && !(x & (x - 1))) found_fwaddr = 1;
+	}
+
+	for (p2 = p, i = 0; i < n; i++, p2 += 4)
 		printf("%u: src = 0x%x, dst = 0x%08x, len = 0x%x, fn = 0x%x\n",
-				i, p[0], p[1], p[2], p[3]);
+				i, p2[0], p2[1], p2[2], p2[3]);
 	printf("\n");
+
+	if (found_fwaddr) {
+		uint32_t ps_size = size;
+		for (p2 = p, i = 0; i < n; i++, p2 += 4) {
+			uint32_t a = p2[0];
+			if (zero_addr && a == zero_addr) continue;
+			if (a < fwaddr) continue;
+			a -= fwaddr;
+			if (ps_size > a) ps_size = a;
+		}
+		printf("ps_addr: 0x%x\n", fwaddr);
+		printf("ps_size: 0x%x\n", ps_size);
+		return ps_size;
+	}
+	return 0;
 }
 
 static void id2str(char *buf, uint32_t val) {
@@ -213,13 +247,13 @@ static int drps_decode(uint8_t *mem, size_t size,
 
 static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 	unsigned i, size_req = 0x1c;
-	unsigned size2, ps_len;
+	unsigned size2, ps_size;
 	char name[128], drps_cnt[4] = { 0 };
 	if (size >= 0x24 && *(uint32_t*)(buf + 0x20) == 0x36353632)
 		printf("0x20: found SC6531E firmware marker\n");
 	size &= ~3;
 	if (size < size_req) return;
-	ps_len = size;
+	ps_size = size;
 	for (i = 0; i < size - size_req + 1; i += 4) {
 		uint32_t *p = (uint32_t*)(buf + i);
 		do {
@@ -228,7 +262,12 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			if (p[2] != 0xe3130001) break;
 			if (p[3] != 0x1047f003) break;
 			if (p[4] != 0xe12fff13) break;
-			print_init_table(buf, size, i + 0x14);
+			{
+				uint32_t a = print_init_table(buf, size, i + 0x14, flags);
+				// use the last one found, in case the firmware
+				// has an additional bootloader at the beginning
+				if (a) ps_size = a;
+			}
 		} while (0);
 
 		do {
@@ -248,7 +287,7 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			if (size2 < p[2]) break;
 			size2 -= p[2];
 			p2 = (uint32_t*)((uint8_t*)p + p[2]);
-			if (ps_len > i) ps_len = i;
+			if (ps_size > i) ps_size = i;
 			for (j = 0; j < n; j++, p2 += 5) {
 				if (size2 < 0x14) break;
 				size2 -= 0x14;
@@ -290,13 +329,113 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			}
 		} while (0);
 	}
-	if ((flags & 1) && ps_len < size) {
+	if ((flags & 1) && ps_size < size) {
 		FILE *fo = fopen("ps.bin", "wb");
 		if (!fo) fprintf(stderr, "fopen(output) failed\n");
 		else {
-			fwrite(buf, 1, ps_len, fo);
+			fwrite(buf, 1, ps_size, fo);
 			fclose(fo);
 		}
+	}
+}
+
+static uint32_t storage_chk(const uint16_t *p, unsigned n, uint32_t pos) {
+	uint32_t sum = pos + 0xc513;
+	for (; n > 1; n -= 2) sum += *p++;
+	return sum & 0xffff;
+}
+
+static unsigned fat12_size(uint8_t *p) {
+	do {
+		if (memcmp(p + 0x36, "FAT12   ", 8)) break;
+		return p[0x13] | p[0x14] << 8;
+	} while (0);
+	return 0;
+}
+
+static void prod_str(uint8_t *buf, int n) {
+	int i;
+	for (i = 0; i < n; i++) {
+		int a = buf[i];
+		if (!a) break;
+		if (a >= 32 && a < 127) putchar(a);
+		else printf("\\x%02x", a);
+	}
+}
+
+static void scan_data(uint8_t *buf, unsigned size, int flags) {
+	unsigned i, size_req = 0x10;
+	unsigned size2;
+	size &= ~3;
+	for (i = 0; i < size - size_req + 1; i += 4) {
+		if (!(i & 0xff)) do {
+			uint8_t *p2 = (uint8_t*)(buf + i);
+			unsigned a, j, n;
+			size2 = size - i;
+			if (size2 < 0x100) break;
+			a = *(uint32_t*)p2;
+			if (a != 0x53503039) break; // 90PS
+#if 0
+			a = *(uint32_t*)(p2 + 0xfc);
+			if ((a & 0x7ff0fff0) != 0x7ff0fff0) break;
+#endif
+			if (*(uint32_t*)(p2 + 0x34) > 10) break;
+			if (*(uint32_t*)(p2 + 0xdc) != 0x53534150) break;
+			printf("0x%x: prodinfo, end = 0x%08x\n", i, *(uint32_t*)(p2 + 0xfc));
+			printf("prodinfo serial: \""); prod_str(p2 + 4, 0x30); printf("\"\n");
+			n = *(uint32_t*)(p2 + 0x34);
+			if (n) {
+				printf("prodinfo features:\n");
+				for (j = 0; j < n; j++) {
+					printf("%u: \"", j); prod_str(p2 + 0x38 + j * 10, 10); printf("\"\n");
+				}
+				printf("\n");
+			}
+		} while (0);
+
+		if (!(i & 0xfff)) do {
+			uint16_t *p2 = (uint16_t*)(buf + i);
+			unsigned a, b, n, items, j;
+			// id, checksum, id2, size
+			a = p2[0]; b = p2[2]; n = p2[3];
+			size2 = size - i;
+			if ((b - 1) >= 0xfffe || (a && a != b) || !n || size2 < n + 8) break;
+			if (p2[1] != storage_chk(p2 + 2, n + 4, i)) break;
+
+			for (items = 0, j = i; size2 >= 8; items++, j += n) {
+				p2 = (uint16_t*)(buf + j);
+				a = p2[0]; b = p2[2]; n = p2[3];
+				if ((b - 1) >= 0xfffe || (a && a != b) || !n) break;
+				n = 8 + ((n + 1) & ~1);
+				if (size2 < n) break;
+				size2 -= n;
+				a = storage_chk(p2 + 2, n - 4, j);
+				if (p2[1] != a) break;
+			}
+			n = b = j; a = 0x200; n = 0;
+			for (;; j += a) {
+				j = (j + a - 1) & -a;
+				if (size < j) break;
+				if (*(uint16_t*)(buf + j - 2) == 0x55aa) {
+					n = j - i; break;
+				}
+			}
+			printf("0x%x: storage block, items = %u, size = 0x%x", i, items, b - i);
+			if (n) printf(" / 0x%x", n);
+			printf("\n");
+
+			for (j = i; items--; j += n) {
+				p2 = (uint16_t*)(buf + j);
+				a = p2[0]; b = p2[2]; n = p2[3];
+				printf("0x%x: %sid = %u, size = %u\n", j, !a ? "deleted, " : "", b, p2[3]);
+				if (n == 512) {
+					a = fat12_size((uint8_t*)p2 + 8);
+					if (a) printf("0x%x: FAT12 header, sectors = %u\n", j + 8, a);
+				}
+				n = 8 + ((n + 1) & ~1);
+			}
+			i = ((j + 3) & ~3) - 4;
+		} while (0);
 	}
 }
 
@@ -333,13 +472,16 @@ static int run_decoder(uint8_t *mem, size_t size, int argc, char **argv,
 	return 0;
 }
 
-#define FATAL() ERR_EXIT("error at %s:%u\n", __func__, __LINE__);
+#define FATAL() do { \
+	fprintf(stderr, "!!! error at %s:%u\n", __func__, __LINE__); \
+	goto err; \
+} while (0)
 
 #if WITH_LZMADEC
 static int drps_decode(uint8_t *mem, size_t size,
 		unsigned drps_offs, unsigned index, const char *outfn) {
 	size_t src_addr, src_size, result, dst_size;
-	uint8_t *dst; FILE *fo;
+	uint8_t *dst = NULL; FILE *fo = NULL;
 	unsigned drps_num, drps_size, i;
 	uint32_t *p, offs;
 
@@ -428,6 +570,11 @@ static int drps_decode(uint8_t *mem, size_t size,
 	}
 	free(dst);
 	return 0;
+#undef FATAL
+err:
+	if (fo) fclose(fo);
+	if (dst) free(dst);
+	return 1;
 }
 #endif
 
@@ -444,6 +591,9 @@ int main(int argc, char **argv) {
 	while (argc > 1) {
 		if (!strcmp(argv[1], "scan")) {
 			scan_fw(mem, size, 0);
+			argc -= 1; argv += 1;
+		} else if (!strcmp(argv[1], "scan_data")) {
+			scan_data(mem, size, 0);
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "copy")) {
 			if (run_decoder(mem, size, argc, argv, &decode_copy)) return 1;
