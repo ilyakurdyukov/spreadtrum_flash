@@ -353,6 +353,20 @@ static unsigned fat12_size(uint8_t *p) {
 	return 0;
 }
 
+static int decode_imei(uint8_t *p, uint8_t *d) {
+	unsigned a, i;
+	if ((*p & 15) != 10) return 0;
+	for (i = 1; i < 16; i++) {
+		a = p[i >> 1];
+		if (i & 1) a >>= 4;
+		a &= 15;
+		if (a >= 10) return 0;
+		*d++ = '0' + a;
+	}
+	*d = 0;
+	return 15;
+}
+
 static void prodinfo_str(uint8_t *buf, int n) {
 	int i;
 	for (i = 0; i < n; i++) {
@@ -388,7 +402,7 @@ static void safe_print_utf16(unsigned a) {
 }
 
 static uint8_t* sms_addr_decode(uint8_t *d, uint8_t *p) {
-	unsigned a, i, k, n;
+	unsigned a, b, i, k, n;
 	const char *conv = "0123456789*#abc";
 	n = *p++; /* sender length */
 	if ((n - 1) >= 20) return NULL;
@@ -397,7 +411,10 @@ static uint8_t* sms_addr_decode(uint8_t *d, uint8_t *p) {
 	if (a == 0xd0) {
 		for (a = i = k = 0; i < n; i++) {
 			if (!(i & 1)) a |= *p++ << k, k += 8;
-			if (k >= 7) *d++ = a & 127, a >>= 7, k -= 7;
+			if (k >= 7) {
+				if ((b = a & 127) < 0x20) return NULL;
+				*d++ = b; a >>= 7; k -= 7;
+			}
 		}
 	} else if ((a | 0x10) == 0x91) {
 		if (a == 0x91) *d++ = '+';
@@ -447,34 +464,43 @@ static void sms_decode(uint8_t *p, unsigned len) {
 		n = p[3]; p += 4;
 		// printf("sms len: %u\n", n);
 		len = end - p;
-		if (len < n) break;
+
+		n *= dcs & 0xc ? 8 : 7;
+		if (len < (n + 7) >> 3) break;
 
 		// some SMS contain UDH even without this bit
-		if (n >= 6 && p[0] == 5 && p[1] == 0 && p[2] == 3)
+		if (n >= 6 * 8 && p[0] == 5 && p[1] == 0 && p[2] == 3)
 			pdu_type |= 0x40;
+
+		k = 0; // padding bits for 7-bit encoding
 
 		// User Data Header
 		if (pdu_type & 0x40) {
-			if (n < 1 || n < (a = p[0] + 1)) break;
+			if (n < 8 || n < (a = p[0] + 1) * 8) break;
 			if (p[1] == 0 && p[2] == 3)
 				printf("sms part: %u / %u (ref = 0x%02x)\n", p[5], p[4], p[3]);
 			if (p[1] == 8 && p[2] == 4)
 				printf("sms part: %u / %u (ref = 0x%04x)\n", p[6], p[5], p[3] << 8 | p[4]);
-			n -= a; p += a;
+			n -= a * 8; p += a;
+			if (!(dcs & 0xc) && (a %= 7)) k = 7 - a;
 		}
 
-		if ((dcs & 0xc) == 8) { // utf16
-			if (n & 1) break;
-			n >>= 1;
-		}
+		if (dcs & 0xc) n >>= 3;
+		if ((dcs & 0xc) == 8 && (n & 1)) break;
+
 		printf("sms message: \"");
 		if ((dcs & 0xc) == 0) { // 7-bit
-			for (a = i = k = 0; i < n; i++) {
+			// skip padding if necessary
+			a = 0; if (k) a = *p++ >> k, k = 8 - k;
+			for (i = 0; i < n; i += 7) {
 				if (k < 7) a |= *p++ << k, k += 8;
 				safe_print_utf16(a & 127); a >>= 7; k -= 7;
 			}
+		} else if ((dcs & 0xc) == 4) { // 8-bit
+			for (i = 0; i < n; i++)
+				safe_print_utf16(*p++);
 		} else if ((dcs & 0xc) == 8) { // utf16
-			for (i = 0; i < n; i++) {
+			for (i = 0; i < n; i += 2) {
 				a = p[0] << 8 | p[1]; p += 2;
 				safe_print_utf16(a);
 			}
@@ -548,11 +574,17 @@ static void scan_data(uint8_t *buf, unsigned size, int flags) {
 				p2 = (uint16_t*)(buf + j);
 				a = p2[0]; b = p2[2]; n = p2[3];
 				printf("0x%x: %sid = %u, size = %u\n", j, !a ? "deleted, " : "", b, p2[3]);
-				if (n >= 512 && !(n & 511)) {
+				// FAT id: 2900, 5000, 5100, 6280
+				if (n && !(n & 511)) {
 					a = fat12_size((uint8_t*)p2 + 8);
 					if (a) printf("0x%x: FAT12 header, sectors = %u\n", j + 8, a);
 				} else if (n == 232) {
 					sms_decode((uint8_t*)p2 + 8, 232);
+				// IMEI id: 5, 377, 390, 484
+				} else if (n == 8) {
+					uint8_t imei[16];
+					if (decode_imei((uint8_t*)p2 + 8, imei))
+						printf("0x%x: IMEI = %s\n", j + 8, imei);
 				}
 				n = 8 + ((n + 1) & ~1);
 			}
