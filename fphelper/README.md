@@ -4,15 +4,15 @@ For SC6530/SC6531/SC6531E firmware dumps. Finds small sections init table and he
 
 ### Usage
 
-You can scan for compressed and/or relocatable sections in the firmware dump:
+You can scan for compressed and/or relocatable segments in the firmware dump:
 
 `./fphelper flash.bin scan`  
 
-Use this command to run a firmware scan and extract large sections:
+Use this command to run a firmware scan and extract segments:
 
 `./fphelper flash.bin unpack`  
 
-* `unpack` command can create: `{ps,kern,user,rsrc,unknown}[%u].bin`
+* `unpack` command can create: `{ps,kern,user,rsrc,unknown}[%u].bin init[%u]_%x.bin`
 
 This command scans for data such as flash storage contents:
 

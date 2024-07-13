@@ -220,13 +220,63 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 		uint32_t ps_size = size;
 		for (p2 = p, i = 0; i < n; i++, p2 += 4) {
 			uint32_t a = p2[0];
-			if (zero_addr && a == zero_addr) continue;
+			if (zero_addr && p2[3] == zero_addr) continue;
 			if (a < fwaddr) continue;
 			a -= fwaddr;
 			if (ps_size > a) ps_size = a;
 		}
 		printf("ps_addr: 0x%x\n", fwaddr);
 		printf("ps_size: 0x%x\n", ps_size);
+		if (flags & 1) {
+			static unsigned init_count = 0;
+			FILE *fo = NULL; uint32_t next = 0;
+			size_t (*lzdec_fn)(const uint8_t*, size_t*, uint8_t*, size_t);
+			lzdec_fn = NULL;
+			if (lz_type == 2) lzdec_fn = &sprd_lzdec2;
+			if (lz_type == 3) lzdec_fn = &sprd_lzdec3;
+
+			for (p2 = p, i = 0; i < n; i++, p2 += 4) {
+				uint32_t offs = p2[0], size2;
+				if (offs < fwaddr) continue;
+				offs -= fwaddr;
+				if (offs >= size) continue;
+
+				if (!(copy_addr && p2[3] == copy_addr) &&
+						!(lzdec_fn && p2[3] == lz_addr))
+					continue;
+
+				if (!fo || p2[1] != next) {
+					char name[64];
+					if (fo) fclose(fo);
+					if (init_count)
+						snprintf(name, sizeof(name), "init%u_%08x.bin", init_count, p2[1]);
+					else
+						snprintf(name, sizeof(name), "init_%08x.bin", p2[1]);
+					fo = fopen(name, "wb");
+					if (!fo) {
+						fprintf(stderr, "fopen(output) failed\n");
+						continue;
+					}
+				}
+				next = 0;
+				size2 = size - offs;
+				if (copy_addr && p2[3] == copy_addr) {
+					if (size2 > p2[2]) size2 = p2[2];
+					next = fwrite(buf + offs, 1, size2, fo);
+				} else if (lzdec_fn && p2[3] == lz_addr) {
+					uint8_t *mem = malloc(p2[2]);
+					if (mem) {
+						size_t src_size = size2;
+						size2 = lzdec_fn(buf + offs, &src_size, mem, p2[2]);
+						next = fwrite(mem, 1, size2, fo);
+						free(mem);
+					}
+				}
+				next += p2[1];
+			}
+			if (fo) fclose(fo);
+			init_count++;
+		}
 		return ps_size;
 	}
 	return 0;
