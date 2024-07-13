@@ -410,7 +410,8 @@ static uint8_t* sms_addr_decode(uint8_t *d, uint8_t *p) {
 	a = *p++; /* sender type */
 	if (a == 0xd0) {
 		for (a = i = k = 0; i < n; i++) {
-			if (!(i & 1)) a |= *p++ << k, k += 8;
+			if (!(i & 1)) a |= *p++ << k;
+			k += 4;
 			if (k >= 7) {
 				if ((b = a & 127) < 0x20) return NULL;
 				*d++ = b; a >>= 7; k -= 7;
@@ -509,9 +510,25 @@ static void sms_decode(uint8_t *p, unsigned len) {
 	} while (0);
 }
 
+typedef struct blk_list {
+	struct blk_list *next;
+	uint32_t offset, items;
+} blk_list_t;
+
+typedef struct fat_list {
+	struct fat_list *next;
+	uint32_t id, len, blk_size;
+} fat_list_t;
+
+#define FREE_LIST(list, T) do { \
+	T *next; for (; list; list = next) { next = list->next; free(list); } \
+} while (0);
+
 static void scan_data(uint8_t *buf, unsigned size, int flags) {
 	unsigned i, size_req = 0x10;
 	unsigned size2;
+	blk_list_t *blk_list = NULL;
+	fat_list_t *fat_list = NULL;
 	size &= ~3;
 	for (i = 0; i < size - size_req + 1; i += 4) {
 		if (!(i & 0xff)) do {
@@ -570,6 +587,15 @@ static void scan_data(uint8_t *buf, unsigned size, int flags) {
 			if (n) printf(" / 0x%x", n);
 			printf("\n");
 
+			if (flags & 1) {
+				blk_list_t *node = malloc(sizeof(blk_list_t));
+				if (node) {
+					node->next = blk_list; blk_list = node;
+					node->offset = i;
+					node->items = items;
+				} else printf("!!! %s alloc failed\n", "blk node");
+			}
+
 			for (j = i; items--; j += n) {
 				p2 = (uint16_t*)(buf + j);
 				a = p2[0]; b = p2[2]; n = p2[3];
@@ -577,7 +603,20 @@ static void scan_data(uint8_t *buf, unsigned size, int flags) {
 				// FAT id: 2900, 5000, 5100, 6280
 				if (n && !(n & 511)) {
 					a = fat12_size((uint8_t*)p2 + 8);
-					if (a) printf("0x%x: FAT12 header, sectors = %u\n", j + 8, a);
+					if (a) {
+						printf("0x%x: FAT12 header, sectors = %u\n", j + 8, a);
+						if (flags & 1) {
+							fat_list_t *node; unsigned div = n >> 9, len;
+							len = (a + div - 1) / div;
+							node = malloc(sizeof(fat_list_t));
+							if (node) {
+								node->next = fat_list; fat_list = node;
+								node->id = p2[2];
+								node->len = len;
+								node->blk_size = p2[3];
+							} else printf("!!! %s alloc failed\n", "fatnode ");
+						}
+					}
 				} else if (n == 232) {
 					sms_decode((uint8_t*)p2 + 8, 232);
 				// IMEI id: 5, 377, 390, 484
@@ -591,6 +630,57 @@ static void scan_data(uint8_t *buf, unsigned size, int flags) {
 			i = ((j + 3) & ~3) - 4;
 		} while (0);
 	}
+	if (flags & 1) { /* extract disk images */
+		fat_list_t *fat = fat_list;
+		for (; fat; fat = fat->next) {
+			unsigned start = fat->id, len = fat->len;
+			blk_list_t *blk = blk_list;
+			uint8_t *empty_blk; uint32_t *arr;
+
+			empty_blk = malloc(fat->blk_size + len * sizeof(*arr));
+			if (!empty_blk) {
+				printf("!!! %s alloc failed\n", "fat temp");
+				continue;
+			}
+			memset(empty_blk, -1, fat->blk_size);
+			arr = (uint32_t*)(empty_blk + fat->blk_size);
+			memset(arr, 0, len * sizeof(*arr));
+
+			for (; blk; blk = blk->next) {
+				unsigned b, n, j = blk->offset;
+				unsigned items = blk->items;
+				for (; items--; j += n) {
+					uint16_t *p2 = (uint16_t*)(buf + j);
+					b = p2[2]; n = p2[3];
+					if (b - start < len && n == fat->blk_size) {
+						b -= start;
+						if (!arr[b] || !((uint16_t*)(buf + arr[b]))[-4])
+							arr[b] = (uint8_t*)p2 + 8 - buf;
+					}
+					n = 8 + ((n + 1) & ~1);
+				}
+			}
+
+			{
+				char name[64]; FILE *fo;
+				snprintf(name, sizeof(name), "fat_%u.img", fat->id);
+				fo = fopen(name, "wb");
+				if (!fo) fprintf(stderr, "fopen(output) failed\n");
+				else {
+					unsigned i;
+					for (i = 0; i < fat->len; i++) {
+						uint8_t *blk = empty_blk;
+						if (arr[i]) blk = buf + arr[i];
+						fwrite(blk, 1, fat->blk_size, fo);
+					}
+					fclose(fo);
+				}
+			}
+			free(empty_blk);
+		}
+	}
+	FREE_LIST(blk_list, blk_list_t);
+	FREE_LIST(fat_list, fat_list_t);
 }
 
 #define ERR_EXIT(...) \
@@ -748,6 +838,9 @@ int main(int argc, char **argv) {
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "scan_data")) {
 			scan_data(mem, size, 0);
+			argc -= 1; argv += 1;
+		} else if (!strcmp(argv[1], "extract_data")) {
+			scan_data(mem, size, 1);
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "copy")) {
 			if (run_decoder(mem, size, argc, argv, &decode_copy)) return 1;

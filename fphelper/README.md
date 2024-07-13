@@ -8,13 +8,21 @@ You can scan for compressed and/or relocatable sections in the firmware dump:
 
 `./fphelper flash.bin scan`  
 
-Use this command to run a scan and extract large sections:
+Use this command to run a firmware scan and extract large sections:
 
 `./fphelper flash.bin unpack`  
+
+* `unpack` command can create: `{ps,kern,user,rsrc,unknown}[%u].bin`
 
 This command scans for data such as flash storage contents:
 
 `./fphelper flash.bin scan_data`  
+
+Use this command to run a data scan and extract FAT disk images:
+
+`./fphelper flash.bin extract_data`  
+
+* `extract_data` command can create: `fat_%u.img`
 
 These commands decode compressed streams and require stream offset:
 
