@@ -154,6 +154,12 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 	((uint8_t*)(p))[2] << 16 | \
 	((uint8_t*)(p))[3] << 24)
 
+static int check_lcd_entry(uint32_t *p) {
+	if (p[6] != 9) return 1;
+	if (p[1] | p[2] | p[7] | p[8] | p[9] | p[10]) return 1;
+	return 0;
+}
+
 static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 	unsigned i, size_req = 0x14 + 8;
 	if (size < size_req) return;
@@ -163,23 +169,25 @@ static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 		// The structure itself is not very useful,
 		// but it is followed by a list of supported LCDs.
 		do {
-			unsigned n, size2; uint32_t *p2;
+			unsigned n, size2, j, k; uint32_t *p2;
 			if (p[0] != 0x28) break;
 			n = p[3];
 			if ((n - 1) >> 4) break;
-			if (p[2] - p[4] != n * 0x24) break;
+			j = n * 0x24;
+			if (p[2] - p[4] != j) break;
 #if 1
 			if (p[4] != offset + i + 0x14) break;
 #else
 			if (p[2] & 3) break;
 #endif
-			size2 = size - i - 0x14;
-			if (size2 < n * 0x24 + 8) break;
-			p = (uint32_t*)(buf + i + 0x14 + n * 0x24);
-			if (p[1] != 100000) break;
+			size2 = size - i; j += 0x14 + 8;
+			if (size2 < j) break;
+			size2 -= j;
+			p2 = (uint32_t*)((uint8_t*)p + j);
+			if (p2[-1] != 100000) break;
 			printf("0x%x (0x%x + 0x%x): fat_config\n", offset + i, offset, i);
 			{
-				unsigned a = p[-2], b = p[-1], x = 0;
+				unsigned a = p2[-4], b = p2[-3], x = 0;
 				// Heuristic guess of RAM size.
 				// The Samsung E1272 (SC6530) have 4MB of RAM by
 				// runtime detection, but 8MB by this guess.
@@ -189,6 +197,20 @@ static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 				if (x) printf("%uMB (%uMBit)\n", x, x * 8);
 				else printf("unknown (0x%0x, 0x%0x)\n", a, b);
 			}
+			for (k = 0x2c, j = 0; size2 >= k; j++) {
+				size2 -= k;
+				if (check_lcd_entry(p2)) {
+					// special case for BQ 3586:
+					// has an extra field, which is the name of the LCD
+					if (j != 1 || size2 < 4 || check_lcd_entry(++p2)) break;
+					size -= 4; k += 4;
+				}
+				printf("0x%x: LCD, id = 0x%06x (%u, %u, %u)\n",
+						(int)((uint8_t*)p2 - buf) + offset,
+						p2[0], p2[3] & 0xffff, p2[3] >> 16, p2[4]);
+				p2 = (uint32_t*)((uint8_t*)p2 + k);
+			}
+
 		} while (0);
 	}
 }
