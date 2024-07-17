@@ -154,6 +154,45 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 	((uint8_t*)(p))[2] << 16 | \
 	((uint8_t*)(p))[3] << 24)
 
+static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
+	unsigned i, size_req = 0x14 + 8;
+	if (size < size_req) return;
+	size &= ~3;
+	for (i = 0; i < size - size_req + 1; i += 4) {
+		uint32_t *p = (uint32_t*)(buf + i);
+		// The structure itself is not very useful,
+		// but it is followed by a list of supported LCDs.
+		do {
+			unsigned n, size2; uint32_t *p2;
+			if (p[0] != 0x28) break;
+			n = p[3];
+			if ((n - 1) >> 4) break;
+			if (p[2] - p[4] != n * 0x24) break;
+#if 1
+			if (p[4] != offset + i + 0x14) break;
+#else
+			if (p[2] & 3) break;
+#endif
+			size2 = size - i - 0x14;
+			if (size2 < n * 0x24 + 8) break;
+			p = (uint32_t*)(buf + i + 0x14 + n * 0x24);
+			if (p[1] != 100000) break;
+			printf("0x%x (0x%x + 0x%x): fat_config\n", offset + i, offset, i);
+			{
+				unsigned a = p[-2], b = p[-1], x = 0;
+				// Heuristic guess of RAM size.
+				// The Samsung E1272 (SC6530) have 4MB of RAM by
+				// runtime detection, but 8MB by this guess.
+				printf("RAM size guess: ");
+				if (a == 0x2000 && b == 0x1000) x = 4;
+				if (a == 0x4000 && b == 0x2000) x = 8;
+				if (x) printf("%uMB (%uMBit)\n", x, x * 8);
+				else printf("unknown (0x%0x, 0x%0x)\n", a, b);
+			}
+		} while (0);
+	}
+}
+
 static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int flags) {
 	uint32_t *p = (uint32_t*)(buf + o1), *p2;
 	uint32_t o2, o3, i, n, size2;
@@ -218,6 +257,9 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 
 	if (found_fwaddr) {
 		uint32_t ps_size = size;
+		if (lz_addr) lz_addr += fwaddr;
+		if (copy_addr) copy_addr += fwaddr;
+		if (zero_addr) zero_addr += fwaddr;
 		for (p2 = p, i = 0; i < n; i++, p2 += 4) {
 			uint32_t a = p2[0];
 			if (zero_addr && p2[3] == zero_addr) continue;
@@ -227,7 +269,7 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 		}
 		printf("ps_addr: 0x%x\n", fwaddr);
 		printf("ps_size: 0x%x\n", ps_size);
-		if (flags & 1) {
+		if (flags & 2) {
 			static unsigned init_count = 0;
 			FILE *fo = NULL; uint32_t next = 0;
 			size_t (*lzdec_fn)(const uint8_t*, size_t*, uint8_t*, size_t);
@@ -245,7 +287,7 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 						!(lzdec_fn && p2[3] == lz_addr))
 					continue;
 
-				if (!fo || p2[1] != next) {
+				if ((flags & 1) && (!fo || p2[1] != next)) {
 					char name[64];
 					if (fo) fclose(fo);
 					if (init_count)
@@ -253,22 +295,22 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 					else
 						snprintf(name, sizeof(name), "init_%08x.bin", p2[1]);
 					fo = fopen(name, "wb");
-					if (!fo) {
+					if (!fo)
 						fprintf(stderr, "fopen(output) failed\n");
-						continue;
-					}
 				}
 				next = 0;
 				size2 = size - offs;
 				if (copy_addr && p2[3] == copy_addr) {
 					if (size2 > p2[2]) size2 = p2[2];
-					next = fwrite(buf + offs, 1, size2, fo);
+					scan_init_seg(buf + offs, size2, p2[1]);
+					if (fo) next = fwrite(buf + offs, 1, size2, fo);
 				} else if (lzdec_fn && p2[3] == lz_addr) {
 					uint8_t *mem = malloc(p2[2]);
 					if (mem) {
 						size_t src_size = size2;
 						size2 = lzdec_fn(buf + offs, &src_size, mem, p2[2]);
-						next = fwrite(mem, 1, size2, fo);
+						scan_init_seg(mem, size2, p2[1]);
+						if (fo) next = fwrite(mem, 1, size2, fo);
 						free(mem);
 					}
 				}
@@ -884,7 +926,7 @@ int main(int argc, char **argv) {
 
 	while (argc > 1) {
 		if (!strcmp(argv[1], "scan")) {
-			scan_fw(mem, size, 0);
+			scan_fw(mem, size, 2);
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "scan_data")) {
 			scan_data(mem, size, 0);
@@ -903,7 +945,7 @@ int main(int argc, char **argv) {
 			argc -= 4; argv += 4;
 #if WITH_LZMADEC
 		} else if (!strcmp(argv[1], "unpack")) {
-			scan_fw(mem, size, 1);
+			scan_fw(mem, size, 2 + 1);
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "lzmadec")) {
 			if (run_decoder(mem, size, argc, argv, &decode_lzma)) return 1;
