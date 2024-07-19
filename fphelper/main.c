@@ -154,6 +154,15 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 	((uint8_t*)(p))[2] << 16 | \
 	((uint8_t*)(p))[3] << 24)
 
+static struct {
+	uint32_t *trapgami;
+	uint32_t ps_addr;
+	uint32_t kern_addr;
+	uint32_t pinmap_offs;
+	uint32_t keymap_addr;
+	uint8_t chip, drps_type;
+} clues = { 0 };
+
 static int check_lcd_entry(uint32_t *p) {
 	if (p[6] != 9) return 1;
 	if (p[1] | p[2] | p[7] | p[8] | p[9] | p[10]) return 1;
@@ -186,12 +195,15 @@ static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 			p2 = (uint32_t*)((uint8_t*)p + j);
 			if (p2[-1] != 100000) break;
 			printf("0x%x (0x%x + 0x%x): fat_config\n", offset + i, offset, i);
+			clues.keymap_addr = p[1] + 0xc;
+			printf("guess: keymap addr = 0x%x\n", p[1] + 0xc);
 			{
 				unsigned a = p2[-4], b = p2[-3], x = 0;
 				// Heuristic guess of RAM size.
-				// The Samsung E1272 (SC6530) have 4MB of RAM by
+				// Except Samsung E1272 (SC6530) and
+				// B310E (SC6530C) that have 4MB of RAM by
 				// runtime detection, but 8MB by this guess.
-				printf("RAM size guess: ");
+				printf("guess: RAM size = ");
 				if (a == 0x2000 && b == 0x1000) x = 4;
 				if (a == 0x4000 && b == 0x2000) x = 8;
 				if (x) printf("%uMB (%uMBit)\n", x, x * 8);
@@ -202,12 +214,12 @@ static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 				if (check_lcd_entry(p2)) {
 					// special case for BQ 3586:
 					// has an extra field, which is the name of the LCD
-					if (j != 1 || size2 < 4 || check_lcd_entry(++p2)) break;
-					size -= 4; k += 4;
+					if (j != 1 || size2 < 8 || check_lcd_entry(++p2)) break;
+					size -= 8; k += 4;
 				}
-				printf("0x%x: LCD, id = 0x%06x (%u, %u, %u)\n",
+				printf("0x%x: LCD, id = 0x%06x (%u, %u, %u), addr = 0x%x\n",
 						(int)((uint8_t*)p2 - buf) + offset,
-						p2[0], p2[3] & 0xffff, p2[3] >> 16, p2[4]);
+						p2[0], p2[3] & 0xffff, p2[3] >> 16, p2[4], p2[5]);
 				p2 = (uint32_t*)((uint8_t*)p2 + k);
 			}
 
@@ -277,6 +289,19 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 				i, p2[0], p2[1], p2[2], p2[3]);
 	printf("\n");
 
+	if (clues.trapgami && clues.trapgami[2] != ~0u) {
+		uint32_t next = 0x04000000, a;
+		for (p2 = p, i = 0; i < n; i++, p2 += 4)
+			if (next == p2[1]) next += p2[2];
+		if (next == 0x04000000) a = next;
+		else if (next == 0x04000010) a = 0x04000100;
+		else a = 0;
+		clues.kern_addr = a;
+		printf("guess: kern addr ");
+		if (a) printf("= 0x%08x\n", a);
+		else printf(">= 0x%08x\n", next);
+	}
+
 	if (found_fwaddr) {
 		uint32_t ps_size = size;
 		if (lz_addr) lz_addr += fwaddr;
@@ -289,6 +314,7 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 			a -= fwaddr;
 			if (ps_size > a) ps_size = a;
 		}
+		clues.ps_addr = fwaddr;
 		printf("ps_addr: 0x%x\n", fwaddr);
 		printf("ps_size: 0x%x\n", ps_size);
 		if (flags & 2) {
@@ -359,12 +385,84 @@ static void id2str(char *buf, uint32_t val) {
 static int drps_decode(uint8_t *mem, size_t size,
 		unsigned drps_offs, unsigned index, const char *outfn);
 
+static int check_keymap(const void *buf, unsigned size) {
+	const int16_t *s = (const int16_t*)buf;
+	int a, i, n, empty = 0, empty2 = 0;
+	n = size >> 1;
+	if (n < 40) return 0;
+	a = clues.chip == 1 ? 40 : 64;
+	if (n >= a) n = a;
+	for (i = 0; i < n; i++) {
+		a = s[i];
+		if (a == -1) { empty++; empty2 += (i & 7) >= 6; continue; }
+		// exception: Vertex M115
+		if ((unsigned)(a - 0x70) < 3) continue;
+		// exception: BQ3586
+		if (a == 0x69) continue;
+		if ((unsigned)(a - 1) > (unsigned)0x39 - 1) break;
+	}
+	// printf("!!! check_keymap: %d, %d, %d\n", i, empty, empty2);
+	if (i < 40 || empty < i - 32) return 0;
+	if (i > 40 && empty2 != i >> 2) return 0;
+	return i << 1;
+}
+
+#define KEYPAD_ENUM(M) \
+	M(0x01, DIAL) \
+	M(0x04, UP) M(0x05, DOWN) M(0x06, LEFT) M(0x07, RIGHT) \
+	M(0x08, LSOFT) M(0x09, RSOFT) \
+	M(0x0d, CENTER) \
+	M(0x23, HASH) M(0x2a, STAR) M(0x2b, PLUS) \
+	M(0x30, 0) M(0x31, 1) M(0x32, 2) M(0x33, 3) M(0x34, 4) \
+	M(0x35, 5) M(0x36, 6) M(0x37, 7) M(0x38, 8) M(0x39, 9)
+
+#define X(num, name) num,
+static const int16_t keypad_ids[] = { KEYPAD_ENUM(X) -1 };
+#undef X
+#define X(num, name) { #name },
+static const char keypad_names[][8] = { KEYPAD_ENUM(X) };
+#undef X
+
+static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags) {
+	FILE *fo;
+	if (!clues.keymap_addr) return;
+	addr = clues.keymap_addr - addr;
+	if (size <= addr) return;
+	size = check_keymap(buf + addr, size - addr);
+	if (!size) return;
+
+	printf("0x%x: keymap", clues.keymap_addr);
+	clues.keymap_addr = 0;
+	do {
+		int a = *(int16_t*)(buf + addr), i;
+		if (a == -1) break;
+		printf(", bootkey = 0x%02x", a);
+		for (i = 0; keypad_ids[i] != -1; i++)
+			if (keypad_ids[i] == a) {
+				printf(" (%s)", keypad_names[i]);
+				break;
+			}
+	} while (0);
+	printf("\n");
+
+	if (flags & 1) {
+		FILE *fo = fopen("keymap.bin", "wb");
+		if (!fo) fprintf(stderr, "fopen(output) failed\n");
+		else {
+			fwrite(buf + addr, 1, size, fo);
+			fclose(fo);
+		}
+	}
+}
+
 static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 	unsigned i, size_req = 0x1c;
 	unsigned size2, ps_size;
 	char name[128], drps_cnt[4] = { 0 };
-	if (size >= 0x24 && *(uint32_t*)(buf + 0x20) == 0x36353632)
+	if (size >= 0x24 && *(uint32_t*)(buf + 0x20) == 0x36353632) {
 		printf("0x20: found SC6531E firmware marker\n");
+		clues.chip = 1;
+	}
 	size &= ~3;
 	if (size < size_req) return;
 	ps_size = size;
@@ -387,7 +485,10 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 		do {
 			if (p[0] != 0x50415254) break;
 			if (p[1] != 0x494d4147) break;
+			if (p[2] != ~0u && (p[2] & 0xff000003)) break;
+			if (p[3] != ~0u && (p[3] & 0xff000003)) break;
 			printf("0x%x: TRAPGAMI, kern = 0x%x, user = 0x%x\n", i, p[2], p[3]);
+			clues.trapgami = p;
 		} while (0);
 
 		do {
@@ -417,6 +518,7 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 					case 0x75736572: s = "user"; k = 2; break;
 					case 0x7253736f: s = "rsrc"; k = 3; break;
 					}
+					clues.drps_type = k;
 					k = drps_cnt[k]++;
 					if (!k) snprintf(name, sizeof(name), "%s.bin", s);
 					else snprintf(name, sizeof(name), "%s%u.bin", s, k);
@@ -435,6 +537,7 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			for (; size2--; p2 += 2) {
 				if ((a = p2[0]) == ~0u && p2[1] == ~0u) {
 					unsigned end = (uint8_t*)(p2 + 2) - buf;
+					clues.pinmap_offs = i;
 					printf("pinmap: 0x%x-0x%x\n", i, end);
 					i = end - 4;
 					break;
@@ -443,12 +546,16 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			}
 		} while (0);
 	}
-	if ((flags & 1) && ps_size < size) {
-		FILE *fo = fopen("ps.bin", "wb");
-		if (!fo) fprintf(stderr, "fopen(output) failed\n");
-		else {
-			fwrite(buf, 1, ps_size, fo);
-			fclose(fo);
+
+	if (ps_size < size) {
+		check_keymap2(buf, ps_size, clues.ps_addr, flags);
+		if (flags & 1) {
+			FILE *fo = fopen("ps.bin", "wb");
+			if (!fo) fprintf(stderr, "fopen(output) failed\n");
+			else {
+				fwrite(buf, 1, ps_size, fo);
+				fclose(fo);
+			}
 		}
 	}
 }
@@ -912,7 +1019,7 @@ static int drps_decode(uint8_t *mem, size_t size,
 
 				RUN_LZMADEC(mem + offs)
 				if (result != size2) {
-					printf("src: 0x%zx-0x%zx, size = 0x%zx; dst: size = %zd / %zd\n",
+					printf("lzmadec: src = 0x%zx-0x%zx, size = 0x%zx, dst_size = %zd / %zd\n",
 							src_addr + offs, src_addr + offs + src_size, src_size, result, size2);
 					FATAL();
 				}
@@ -920,8 +1027,13 @@ static int drps_decode(uint8_t *mem, size_t size,
 		} else {
 			src_size = colb_size;
 			RUN_LZMADEC(mem)
-			printf("src: 0x%zx-0x%zx, size = 0x%zx; dst: size = %zd / %zd\n",
-					src_addr, src_addr + src_size, src_size, result, size2);
+			if (result != size2) {
+				printf("lzmadec: src = 0x%zx-0x%zx, size = 0x%zx, dst_size = %zd / %zd\n",
+						src_addr, src_addr + src_size, src_size, result, size2);
+				FATAL();
+			}
+			if (clues.drps_type == 1 && clues.kern_addr)
+				check_keymap2(dst, result, clues.kern_addr, 1);
 #undef RUN_LZMADEC
 		}
 		fclose(fo);

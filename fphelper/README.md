@@ -12,7 +12,7 @@ Use this command to run a firmware scan and extract segments:
 
 `./fphelper flash.bin unpack`  
 
-* `unpack` command can create: `{ps,kern,user,rsrc,unknown}[%u].bin init[%u]_%x.bin`
+* `unpack` command can create: `{ps,kern,user,rsrc,unknown}[%u].bin init[%u]_%x.bin keymap.bin`
 
 This command scans for data such as flash storage contents:
 
