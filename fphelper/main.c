@@ -169,6 +169,26 @@ static int check_lcd_entry(uint32_t *p) {
 	return 0;
 }
 
+static void find_lcd_list(uint8_t *buf, unsigned size, uint32_t offset) {
+	unsigned i, size_req = 0x2c;
+	if (size < size_req) return;
+	size &= ~3;
+	// printf("!!! find_lcd_list\n");
+	for (i = 0; i < size - size_req + 1; i += 4) {
+		uint32_t *p = (uint32_t*)(buf + i);
+		do {
+			uint32_t a, *p2 = p;
+			if (p[6] != 9) break;
+			if (p[1] | p[2] | p[7] | p[8] | p[9] | p[10]) break;
+			a = p[5];
+			if (a < 0x1000 || (a & ~0x043ffffc)) break;
+			printf("0x%x: LCD, id = 0x%06x (%u, %u, %u), addr = 0x%x\n",
+					(int)((uint8_t*)p2 - buf) + offset,
+					p2[0], p2[3] & 0xffff, p2[3] >> 16, p2[4], p2[5]);
+		} while (0);
+	}
+}
+
 static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 	unsigned i, size_req = 0x14 + 8;
 	if (size < size_req) return;
@@ -222,7 +242,9 @@ static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 						p2[0], p2[3] & 0xffff, p2[3] >> 16, p2[4], p2[5]);
 				p2 = (uint32_t*)((uint8_t*)p2 + k);
 			}
-
+			// exception: Vertex M115
+			if (!j) find_lcd_list(buf, size, offset);
+			return;
 		} while (0);
 	}
 }
@@ -543,6 +565,22 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 					break;
 				}
 				if ((a ^ 0x8c000000) >> 12 && (a ^ 0x82001000) >> 12) break;
+			}
+		} while (0);
+
+		do {
+			uint32_t *p2 = p, a, j;
+			if (p[6] != 0x4000000) break;
+			if (p[3] != 1) break;
+			a = p[1];
+			if ((p[0] | p[2]) || !a || (a & ~0x1f00000)) break;
+			printf("guess: flash size = %uMB (%uMBit)\n", a >> 20, a >> 17);
+			printf("0x%x: memory_map\n", i);
+			for (j = 0; size2 >= 0x18; p2 += 6, j++) {
+				size2 -= 0x18;
+				if (((p2[0] | p2[1] | p2[2]) & 0xfff) || p2[3] >> 4) break;
+				printf("%u: addr = 0x%x, size = 0x%x, 0x%x, %u, 0x%x, 0x%x\n",
+						j, p2[0], p2[1], p2[2], p2[3], p2[4], p2[5]);
 			}
 		} while (0);
 	}
