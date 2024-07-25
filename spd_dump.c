@@ -563,14 +563,22 @@ static uint8_t* loadfile(const char *fn, size_t *num, size_t extra) {
 }
 
 static void send_file(spdio_t *io, const char *fn,
-		uint32_t start_addr, int end_data, unsigned step) {
+		uint32_t start_addr, int end_data, unsigned step,
+		unsigned src_offs, unsigned src_size) {
 	uint8_t *mem; size_t size = 0;
 	uint32_t data[2], i, n;
 	int ret;
 	mem = loadfile(fn, &size, 0);
 	if (!mem) ERR_EXIT("loadfile(\"%s\") failed\n", fn);
 	if (size >> 32) ERR_EXIT("file too big\n");
-
+	if (size < src_offs)
+		ERR_EXIT("data outside the file\n");
+	size -= src_offs;
+	if (src_size) {
+		if (size < src_size)
+			ERR_EXIT("data outside the file\n");
+		size = src_size;
+	}
 	WRITE32_BE(data, start_addr);
 	WRITE32_BE(data + 1, size);
 
@@ -581,7 +589,7 @@ static void send_file(spdio_t *io, const char *fn,
 		n = size - i;
 		// n = spd_transcode_max(mem + i, size - i, 2048 - 2 - 6);
 		if (n > step) n = step;
-		encode_msg(io, BSL_CMD_MIDST_DATA, mem + i, n);
+		encode_msg(io, BSL_CMD_MIDST_DATA, mem + src_offs + i, n);
 		send_and_check(io);
 	}
 	free(mem);
@@ -1078,7 +1086,7 @@ int main(int argc, char **argv) {
 				send_and_check(io);
 
 				send_file(io, fn, addr, end_data,
-					blk_size ? blk_size : 528);
+					blk_size ? blk_size : 528, 0, 0);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
 				send_and_check(io);
@@ -1120,7 +1128,7 @@ int main(int argc, char **argv) {
 			} else {
 
 				send_file(io, fn, addr, end_data,
-					blk_size ? blk_size : 528);
+					blk_size ? blk_size : 528, 0, 0);
 
 				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
 				send_msg(io);
@@ -1151,6 +1159,20 @@ int main(int argc, char **argv) {
 				ERR_EXIT("32-bit limit reached\n");
 			dump_flash(io, addr, offset, size, fn,
 					blk_size ? blk_size : 1024);
+			argc -= 5; argv += 5;
+
+		} else if (!strcmp(argv[1], "write_data")) {
+			const char *fn; uint64_t addr, offset, size;
+			if (argc <= 3) ERR_EXIT("bad command\n");
+
+			addr = str_to_size(argv[2]);
+			offset = str_to_size(argv[3]);
+			size = str_to_size(argv[4]);
+			fn = argv[5];
+			if ((addr | size | offset | (addr + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
+			send_file(io, fn, addr, end_data,
+				blk_size ? blk_size : 528, offset, size);
 			argc -= 5; argv += 5;
 
 		} else if (!strcmp(argv[1], "read_mem")) {
