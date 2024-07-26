@@ -600,6 +600,15 @@ static void send_file(spdio_t *io, const char *fn,
 	send_and_check(io);
 }
 
+static void erase_flash(spdio_t *io, uint32_t addr, uint32_t size) {
+	uint32_t data[2];
+	check_confirm("erase flash");
+	WRITE32_BE(data, addr);
+	WRITE32_BE(data + 1, size);
+	encode_msg(io, BSL_CMD_ERASE_FLASH, data, 4 * 2);
+	send_and_check(io);
+}
+
 static unsigned dump_flash(spdio_t *io,
 		uint32_t addr, uint32_t start, uint32_t len,
 		const char *fn, unsigned step) {
@@ -1163,7 +1172,7 @@ int main(int argc, char **argv) {
 
 		} else if (!strcmp(argv[1], "write_data")) {
 			const char *fn; uint64_t addr, offset, size;
-			if (argc <= 3) ERR_EXIT("bad command\n");
+			if (argc <= 5) ERR_EXIT("bad command\n");
 
 			addr = str_to_size(argv[2]);
 			offset = str_to_size(argv[3]);
@@ -1174,6 +1183,17 @@ int main(int argc, char **argv) {
 			send_file(io, fn, addr, end_data,
 				blk_size ? blk_size : 528, offset, size);
 			argc -= 5; argv += 5;
+
+		} else if (!strcmp(argv[1], "erase_flash")) {
+			const char *fn; uint64_t addr, offset, size;
+			if (argc <= 3) ERR_EXIT("bad command\n");
+
+			addr = str_to_size(argv[2]);
+			size = str_to_size(argv[3]);
+			if ((addr | size | (addr + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
+			erase_flash(io, addr, size);
+			argc -= 3; argv += 3;
 
 		} else if (!strcmp(argv[1], "read_mem")) {
 			const char *fn; uint64_t addr, size;
