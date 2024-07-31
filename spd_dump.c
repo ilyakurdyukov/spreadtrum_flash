@@ -406,7 +406,7 @@ static int send_msg(spdio_t *io) {
 	return ret;
 }
 
-static int recv_msg(spdio_t *io) {
+static int recv_msg1(spdio_t *io) {
 	int a, pos, len, chk;
 	int esc = 0, nread = 0, head_found = 0, plen = 6;
 
@@ -508,18 +508,29 @@ static int recv_msg(spdio_t *io) {
 	return nread;
 }
 
+static unsigned recv_type(spdio_t *io) {
+	int a;
+	if (io->raw_len < 6) return -1;
+	return READ16_BE(io->raw_buf);
+}
+
+static int recv_msg(spdio_t *io) {
+	int ret;
+	for (;;) {
+		ret = recv_msg1(io);
+		if (!ret || recv_type(io) != BSL_REP_LOG) break;
+		DBG_LOG("BSL_REP_LOG: ");
+		print_string(stderr, io->raw_buf + 4, READ16_BE(io->raw_buf + 2));
+	}
+	return ret;
+}
+
 static int recv_msg_timeout(spdio_t *io, int timeout) {
 	int old = io->timeout, ret;
 	io->timeout = old > timeout ? old : timeout;
 	ret = recv_msg(io);
 	io->timeout = old;
 	return ret;
-}
-
-static unsigned recv_type(spdio_t *io) {
-	int a;
-	if (io->raw_len < 6) return -1;
-	return READ16_BE(io->raw_buf);
 }
 
 static void send_and_check(spdio_t *io) {
@@ -567,7 +578,7 @@ static void send_file(spdio_t *io, const char *fn,
 		unsigned src_offs, unsigned src_size) {
 	uint8_t *mem; size_t size = 0;
 	uint32_t data[2], i, n;
-	int ret;
+
 	mem = loadfile(fn, &size, 0);
 	if (!mem) ERR_EXIT("loadfile(\"%s\") failed\n", fn);
 	if (size >> 32) ERR_EXIT("file too big\n");

@@ -140,4 +140,5 @@ enum {
 	BSL_REP_READ_PARTITION       = 0xBA,
 	BSL_REP_READ_LOG             = 0xBB,
 	BSL_REP_UNSUPPORTED_COMMAND  = 0xFE,
+	BSL_REP_LOG                  = 0xFF,
 };

@@ -44,7 +44,7 @@ CODE32_FN _start
 	ldr	sp, 1f
 	ldr	pc, 2f
 2:	.long	entry_main
-1:	.long	__stack_bottom
+1:	.long	0x40009000 // __stack_bottom
 3:	.long	__image_start
 
 CODE32_FN __gnu_thumb1_case_uqi
@@ -57,5 +57,18 @@ CODE32_FN __gnu_thumb1_case_uhi
 	add	r12, r0, lr, lsr #1
 	ldrh	r12, [r12, r12]
 	add	lr, lr, r12, lsl #1
+	bx	lr
+
+CODE32_FN sys_wait_clk
+1:	subs	r0, #4	// 1
+	bhi	1b	// 3
+	bx	lr
+
+// r1:r0 = r1:r0 * r3:r2
+CODE32_FN __aeabi_lmul
+	mul	r3, r0, r3
+	mla	r3, r2, r1, r3
+	umull	r0, r1, r2, r0
+	add	r1, r3
 	bx	lr
 

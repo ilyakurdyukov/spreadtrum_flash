@@ -226,7 +226,7 @@ static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 				printf("guess: RAM size = ");
 				if (a == 0x2000 && b == 0x1000) x = 4;
 				if (a == 0x4000 && b == 0x2000) x = 8;
-				if (x) printf("%uMB (%uMBit)\n", x, x * 8);
+				if (x) printf("%uMB (%uMbit)\n", x, x * 8);
 				else printf("unknown (0x%0x, 0x%0x)\n", a, b);
 			}
 			for (k = 0x2c, j = 0; size2 >= k; j++) {
@@ -574,7 +574,7 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			if (p[3] != 1) break;
 			a = p[1];
 			if ((p[0] | p[2]) || !a || (a & ~0x1f00000)) break;
-			printf("guess: flash size = %uMB (%uMBit)\n", a >> 20, a >> 17);
+			printf("guess: flash size = %uMB (%uMbit)\n", a >> 20, a >> 17);
 			printf("0x%x: memory_map\n", i);
 			for (j = 0; size2 >= 0x18; p2 += 6, j++) {
 				size2 -= 0x18;

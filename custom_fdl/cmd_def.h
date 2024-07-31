@@ -43,6 +43,8 @@ typedef enum dl_cmd_type {
 	BSL_REP_READ_FLASH           = 0x93,
 	BSL_REP_READ_CHIP_TYPE       = 0x94,
 	BSL_REP_READ_NVITEM          = 0x95,
+
+	BSL_REP_LOG                  = 0xFF,
 } dl_cmd_type_t;
 
 #endif // CMD_DEF_H
