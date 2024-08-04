@@ -12,7 +12,7 @@ void sfc_cmdclr(sfc_base_t *sfc) {
 	for (i = 0; i < 12; i++) sfc->cmd[i] = 0;
 }
 
-unsigned sfc_read_status(int cs) {
+uint32_t sfc_cmd_read(int cs, unsigned cmd, unsigned n) {
 	sfc_base_t *sfc0 = SFC_BASE, *sfc;
 	sfc = sfc0 + cs;
 
@@ -20,29 +20,51 @@ unsigned sfc_read_status(int cs) {
 	sfc->cmd[7] = 0;
 	sfc0->cmd_set &= ~1; // write
 	SFC_CMDSET(sfc, 1, 7);
-	sfc->cmd[0] = 0x05; // Read Status Register
+	sfc->cmd[0] = cmd;
 	sfc->type_info[0 / 4] = SFC_TYPEINFO(1, 1, WRITE, 0);
-	sfc->type_info[7 / 4] = SFC_TYPEINFO(1, 1, READ, 0) << 24;
+	sfc->type_info[7 / 4] = SFC_TYPEINFO(1, n, READ, 0) << 24;
 	sfc0->int_clr = 1 << cs;
 	sfc0->soft_req |= 1;
 	while (!(sfc->status & 1));
 
-	return sfc->cmd[7] >> 24;
+	return sfc->cmd[7];
+}
+
+void sfc_write_status(int cs, unsigned val) {
+	sfc_base_t *sfc0 = SFC_BASE, *sfc;
+	sfc = sfc0 + cs;
+
+	sfc_write_enable(cs);
+
+	sfc->tbuf_clr = 1;
+	sfc0->cmd_set &= ~1; // write
+	SFC_CMDSET(sfc, 1, 7);
+	sfc->cmd[0] = 0x01; // Write Status Register
+	sfc->cmd[1] = val;
+	sfc->type_info[0] =
+			SFC_TYPEINFO(1, 1, WRITE, 0) |
+			SFC_TYPEINFO(1, 1, WRITE, 0) << 8;
+	sfc0->int_clr = 1 << cs;
+	sfc0->soft_req |= 1;
+	while (!(sfc->status & 1));
+
+	SFC_WRITE_WAIT(cs);
 }
 
 void sfc_write_enable(int cs) {
 	sfc_base_t *sfc0 = SFC_BASE, *sfc;
 	sfc = sfc0 + cs;
-	do {
-		sfc->tbuf_clr = 1;
-		sfc0->cmd_set &= ~1; // write
-		SFC_CMDSET(sfc, 1, 7);
-		sfc->cmd[0] = 0x06; // Write Enable
-		sfc->type_info[0 / 4] = SFC_TYPEINFO(1, 1, WRITE, 0);
-		sfc0->int_clr = 1 << cs;
-		sfc0->soft_req |= 1;
-		while (!(sfc->status & 1));
-	} while (!(sfc_read_status(cs) & 2));
+
+	sfc->tbuf_clr = 1;
+	sfc0->cmd_set &= ~1; // write
+	SFC_CMDSET(sfc, 1, 7);
+	sfc->cmd[0] = 0x06; // Write Enable
+	sfc->type_info[0 / 4] = SFC_TYPEINFO(1, 1, WRITE, 0);
+	sfc0->int_clr = 1 << cs;
+	sfc0->soft_req |= 1;
+	while (!(sfc->status & 1));
+
+	while (!(sfc_read_status(cs) & 2));
 }
 
 void sfc_erase(int cs, int addr, int cmd, int addr_len) {
@@ -64,9 +86,7 @@ void sfc_erase(int cs, int addr, int cmd, int addr_len) {
 	sfc0->soft_req |= 1;
 	while (!(sfc->status & 1));
 
-	sys_wait_us(30);
-	// wait for completion
-	while (sfc_read_status(cs) & 1);
+	SFC_WRITE_WAIT(cs);
 }
 
 void sfc_write(int cs, int addr, const void *buf, unsigned size) {
@@ -113,9 +133,7 @@ void sfc_write(int cs, int addr, const void *buf, unsigned size) {
 		sfc0->soft_req |= 1;
 		while (!(sfc->status & 1));
 
-		sys_wait_us(30);
-		// wait for completion
-		while (sfc_read_status(cs) & 1);
+		SFC_WRITE_WAIT(cs);
 	}
 }
 

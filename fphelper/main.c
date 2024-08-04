@@ -163,6 +163,43 @@ static struct {
 	uint8_t chip, drps_type;
 } clues = { 0 };
 
+#define CHECK_DEVTAB \
+	unsigned a = 0x4d5241, k; /* ARM */ \
+	if (p[0] != a) break; \
+	if (p[1] | p[2] | p[3]) break; \
+	if (size - i < 0x100) break; \
+	k = 4; \
+	if (p[5] != a) { \
+		if (p[9] != a) break; \
+		k = 8; \
+	} \
+	if (p[9 + k * 3] != a) break;
+
+static int devtab_chip(uint32_t *p, unsigned k) {
+	unsigned arm_freq, ahb_freq;
+	do {
+		p += k;
+		if (p[2] | p[3] | p[4]) break;
+		arm_freq = p[0];
+		p += k + 8;
+		if (p[0] != 0x424841) break; // AHB
+		if (p[1] | p[2] | p[3]) break;
+		p += k;
+		// if (p[1] != a) break;
+		if (p[2] | p[3] | p[4]) break;
+		ahb_freq = p[0];
+		if (k == 4) {
+			if (arm_freq != ahb_freq) break;
+			if (arm_freq == 208000000) return 3;
+			if (arm_freq == 312000000) return 2;
+		} else {
+			if (arm_freq == 208000000 &&
+					ahb_freq == arm_freq / 2) return 1;
+		}
+	} while (0);
+	return 0;
+}
+
 static int check_lcd_entry(uint32_t *p) {
 	if (p[6] != 9) return 1;
 	if (p[1] | p[2] | p[7] | p[8] | p[9] | p[10]) return 1;
@@ -434,7 +471,8 @@ static int check_keymap(const void *buf, unsigned size) {
 	M(0x04, UP) M(0x05, DOWN) M(0x06, LEFT) M(0x07, RIGHT) \
 	M(0x08, LSOFT) M(0x09, RSOFT) \
 	M(0x0d, CENTER) \
-	M(0x23, HASH) M(0x2a, STAR) M(0x2b, PLUS) \
+	M(0x23, HASH) M(0x24, VOLUP) M(0x25, VOLDOWN) \
+	M(0x29, EXTRA) M(0x2a, STAR) M(0x2b, PLUS) \
 	M(0x30, 0) M(0x31, 1) M(0x32, 2) M(0x33, 3) M(0x34, 4) \
 	M(0x35, 5) M(0x36, 6) M(0x37, 7) M(0x38, 8) M(0x39, 9)
 
@@ -513,21 +551,35 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			clues.trapgami = p;
 		} while (0);
 
+		do { /* Found in all firmwares except for Nokia TA-1174. */
+			unsigned id;
+			if (p[0] != 0x4d414748) break;
+			if (p[1] != 0x5346432e) break;
+			if (size - i < 0x30) break;
+			if (p[10] != 0xffffffff) break;
+			if (p[11] != 0x5441494c) break;
+			id = (p[2] & 0xff) << 16 | (p[3] & 0xff) << 8 | (p[4] & 0xff);
+			printf("0x%x: HGAM.CFS, cs0_id = 0x%06x, cs0_size = 0x%x", i, id, p[5]);
+			if (p[9]) {
+				id = (p[6] & 0xff) | (p[7] & 0xff) << 8 | (p[8] & 0xff) << 16;
+				printf("cs1_id = 0x%06x, cs1_size = 0x%x", id, p[9]);
+			}
+			printf("\n");
+		} while (0);
+
 		do {
 			uint32_t *p2, j, n;
-			if (p[0] != 0x53505244) break;
-			if (p[1] != 0) break;
-			n = p[3];
-			if ((n - 1) >> 5) break;
+			if (p[0] != 0x53505244 || p[1]) break;
+			j = p[2]; n = p[3];
+			if ((n - 1) >> 5 | (j & 3)) break;
 			printf("0x%x: DRPS, size = 0x%x, num = %u\n", i, p[2], n);
 			size2 = size - i;
-			if (size2 < p[2]) break;
-			size2 -= p[2];
-			p2 = (uint32_t*)((uint8_t*)p + p[2]);
+			if (size2 < j) break;
+			size2 -= j;
+			p2 = (uint32_t*)((uint8_t*)p + j);
 			if (ps_size > i) ps_size = i;
+			if (size2 < n * 0x14) break;
 			for (j = 0; j < n; j++, p2 += 5) {
-				if (size2 < 0x14) break;
-				size2 -= 0x14;
 				if (p2[0] != 0x424c4f43) break;
 				id2str(name, p2[1]);
 				printf("0x%x: COLB, name = \"%s\", offs = 0x%x (0x%x), size = 0x%x, 0x%x\n",
@@ -560,11 +612,26 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 				if ((a = p2[0]) == ~0u && p2[1] == ~0u) {
 					unsigned end = (uint8_t*)(p2 + 2) - buf;
 					clues.pinmap_offs = i;
-					printf("pinmap: 0x%x-0x%x\n", i, end);
+					printf("0x%x: pinmap (end = 0x%x)\n", i, end);
 					i = end - 4;
 					break;
 				}
 				if ((a ^ 0x8c000000) >> 12 && (a ^ 0x82001000) >> 12) break;
+			}
+		} while (0);
+
+		do {
+			uint32_t *p = (uint32_t*)(buf + i);
+			CHECK_DEVTAB;
+			k = devtab_chip(p, k);
+			if (k) {
+				const char *s = NULL;
+				switch (k) {
+				case 1: s = "SC6531E"; break;
+				case 2: s = "SC6531"; break;
+				case 3: s = "SC6530"; break;
+				}
+				printf("0x%x: devices_tab (chip = %s)\n", i, s);
 			}
 		} while (0);
 
@@ -576,6 +643,7 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			if ((p[0] | p[2]) || !a || (a & ~0x1f00000)) break;
 			printf("guess: flash size = %uMB (%uMbit)\n", a >> 20, a >> 17);
 			printf("0x%x: memory_map\n", i);
+			size2 = size - i;
 			for (j = 0; size2 >= 0x18; p2 += 6, j++) {
 				size2 -= 0x18;
 				if (((p2[0] | p2[1] | p2[2]) & 0xfff) || p2[3] >> 4) break;
@@ -1086,6 +1154,147 @@ err:
 }
 #endif
 
+static int sdboot_helper_scan(uint8_t *buf, unsigned size,
+		uint32_t *rend, uint32_t *rjump) {
+	unsigned i, chip = 0, end = 0;
+	size &= ~3;
+	for (i = 0; i < size - 0x20; i += 4) {
+		do {
+			uint32_t *p = (uint32_t*)(buf + i);
+			uint32_t j, n, size2;
+			if (p[0] != 0x53505244 || p[1]) break;
+			j = p[2]; n = p[3];
+			if ((n - 1) >> 5 | (j & 3)) break;
+			size2 = size - i;
+			if (size2 < j) break;
+			size2 -= j;
+			p = (uint32_t*)((uint8_t*)p + j);
+			if (size2 < n * 0x14) break;
+			for (j = 0; j < n; j++, p += 5)
+				if (p[0] != 0x424c4f43) break;
+			end = (uint8_t*)p - buf;
+		} while (0);
+
+		do {
+			uint32_t *p = (uint32_t*)(buf + i);
+			uint32_t a = 0x3d3d3d3d;
+			unsigned j, size2;
+			if (p[0] != 0x3d3d3d0a) break;
+			if (p[1] != a) break;
+			size2 = size - i;
+			if (size2 < 0x3c) break;
+			for (j = 2; j < 14; j++)
+				if (p[j] != a) break;
+			if (j < 14) break;
+			if (p[14] != 0x00000a3d) break;
+			if (i > 0x400000 - 0x3c) break;
+			if (rjump) { *rjump = i; rjump = NULL; }
+		} while (0);
+
+		do {
+			uint32_t *p = (uint32_t*)(buf + i);
+			CHECK_DEVTAB;
+			k = devtab_chip(p, k);
+			if (k) {
+				if (chip) return 0;
+				chip = k;
+			}
+		} while (0);
+	}
+	*rend = end;
+	return chip;
+}
+
+static void sdboot_helper(uint8_t *buf, unsigned size) {
+	unsigned nvram_blk = 0x8000;
+	uint32_t entry, sdboot = 0, jump_buf = 0;
+	if (size < 0x1000) return;
+	do {
+		uint32_t a, *p = (uint32_t*)buf;
+		unsigned i, chip = 0, end = 0;
+		a = p[0];
+		if (a == 0xe59ff01c) {
+			if (p[8] != 0x36353632) break;
+			chip = 1;
+		} else if (a != 0xe59ff018) break;
+		for (i = 1; i < 8; i++)
+			if (p[i] != a) break;
+		if (i != 8) break;
+		entry = p[chip == 1 ? 9 : 8];
+		if (entry >= size || (entry & 3) || entry < 0x40) break;
+		p = (uint32_t*)(buf + entry);
+		if (p[-9] == 0x3d3d3d0a && p[-2] == 0x0a3d3d &&
+				p[0] == 0xe59f0008 && p[4] == 0x20a00200) {
+			jump_buf = entry - 0x24; entry = p[-1];
+		}
+		if (size - entry >= 0x1000 && !(entry & 0xfff)) {
+			p = (uint32_t*)(buf + entry);
+			if (!memcmp((char*)p + 8, "SDLOADER", 8)) {
+				sdboot = entry; entry = p[1];
+			}
+		}
+		chip = sdboot_helper_scan(buf, size, &end, jump_buf ? NULL : &jump_buf);
+		if (!chip) break;
+		if ((chip != 1) != (*(uint32_t*)buf == 0xe59ff018)) break;
+		if (!sdboot) {
+			unsigned j = (end + 0xfff) & ~0xfff, k;
+			size &= ~(nvram_blk - 1);
+			while (j < size) {
+				if (~*(uint32_t*)(buf + (j | 0x7ffc))) {
+					j = (j & ~0x7fff) + 0x8000;
+					continue;
+				}
+				p = (uint32_t*)(buf + j);
+				for (k = 0; k < 0x400; k++)
+					if (~p[k]) goto end;
+				sdboot = j; break;
+end:		j += 0x1000;
+			}
+		}
+		printf("sdboot: entry = 0x%x, chip = %u\n", entry, chip);
+		printf("sdboot: jump_buf = 0x%x, end = 0x%x\n", jump_buf, end);
+		printf("sdboot: sdboot = 0x%x\n", sdboot);
+		if (chip == 1 || sdboot < 4 << 20) jump_buf = 0;
+		else if (!jump_buf) break;
+		printf("\nThe instructions below are valid only for this firmware!\n");
+		{
+			uint32_t entry_offs = chip == 1 ? 0x24 : 0x20;
+			char sdboot0[64], sdboot1[64];
+			if (sdboot) {
+				snprintf(sdboot0, sizeof(sdboot0), "0x%x", sdboot);
+				snprintf(sdboot1, sizeof(sdboot1), "0x%x", sdboot + 4);
+			} else {
+				printf("Сan't find empty page for sdboot!\n");
+				strcpy(sdboot0, "$sdboot");
+				strcpy(sdboot1, "$(($sdboot+4))");
+			}
+			printf("\n# sdboot test run:\n\n");
+			printf("./spd_dump fdl sdboot%u.bin 0x40004000\n", chip);
+			printf("\n# sdboot install/update:\n\n");
+			printf("./spd_dump fdl nor_fdl1.bin 0x40004000 \\\n");
+			if (jump_buf) {
+				printf("  write_word fw+0x%x 0x%x \\\n", entry_offs, jump_buf + 0x1c + 8);
+				printf("  write_data fw+0x%x 0 0 jump4m.bin \\\n", jump_buf + 0x1c);
+				printf("  write_word fw+0x%x %s \\\n", jump_buf + 0x20, sdboot0);
+			} else
+				printf("  write_word fw+0x%x %s \\\n", entry_offs, sdboot0);
+			printf("  erase_flash fw+%s 4K \\\n", sdboot0);
+			printf("  write_data fw+%s 0 0 sdboot%u.bin \\\n", sdboot0, chip);
+			printf("  write_word fw+%s 0x%x\n\n", sdboot1, entry);
+			printf("# sdboot remove:\n\n");
+			if (jump_buf)
+				printf("echo \"============================\" > jump_orig.bin\n");
+			printf("./spd_dump fdl nor_fdl1.bin 0x40004000 \\\n");
+			printf("  write_word fw+0x%x 0x%x \\\n", entry_offs, entry);
+			if (jump_buf)
+				printf("  write_data fw+0x%x 0 0x1c jump_orig.bin \\\n", jump_buf + 0x1c);
+			printf("  erase_flash fw+%s 4K\n\n", sdboot0);
+		}
+		return;
+	} while (0);
+	printf("sdboot: unsupported firmware\n");
+}
+
 int main(int argc, char **argv) {
 	uint8_t *mem; size_t size = 0;
 
@@ -1105,6 +1314,9 @@ int main(int argc, char **argv) {
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "extract_data")) {
 			scan_data(mem, size, 1);
+			argc -= 1; argv += 1;
+		} else if (!strcmp(argv[1], "sdboot")) {
+			sdboot_helper(mem, size);
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "copy")) {
 			if (run_decoder(mem, size, argc, argv, &decode_copy)) return 1;

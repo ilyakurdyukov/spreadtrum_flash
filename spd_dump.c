@@ -248,6 +248,7 @@ static int spd_transcode(uint8_t *dst, uint8_t *src, int len) {
 	return n;
 }
 
+__attribute__((unused))
 static int spd_transcode_max(uint8_t *src, int len, int n) {
 	int i, a;
 	for (i = 0; i < len; i++) {
@@ -333,7 +334,6 @@ static unsigned spd_checksum(unsigned crc, const void *src, int len, int final) 
 
 static void encode_msg(spdio_t *io, int type, const void *data, size_t len) {
 	uint8_t *p, *p0; unsigned chk;
-	int i;
 
 	if (len > 0xffff)
 		ERR_EXIT("message too long\n");
@@ -509,7 +509,6 @@ static int recv_msg1(spdio_t *io) {
 }
 
 static unsigned recv_type(spdio_t *io) {
-	int a;
 	if (io->raw_len < 6) return -1;
 	return READ16_BE(io->raw_buf);
 }
@@ -573,12 +572,32 @@ static uint8_t* loadfile(const char *fn, size_t *num, size_t extra) {
 	return buf;
 }
 
+static void send_buf(spdio_t *io,
+		uint32_t start_addr, int end_data,
+		unsigned step, uint8_t *mem, unsigned size) {
+	uint32_t data[2], i, n;
+
+	WRITE32_BE(data, start_addr);
+	WRITE32_BE(data + 1, size);
+
+	encode_msg(io, BSL_CMD_START_DATA, data, 4 * 2);
+	send_and_check(io);
+	for (i = 0; i < size; i += n) {
+		n = size - i;
+		// n = spd_transcode_max(mem + i, size - i, 2048 - 2 - 6);
+		if (n > step) n = step;
+		encode_msg(io, BSL_CMD_MIDST_DATA, mem + i, n);
+		send_and_check(io);
+	}
+	if (!end_data) return;
+	encode_msg(io, BSL_CMD_END_DATA, NULL, 0);
+	send_and_check(io);
+}
+
 static void send_file(spdio_t *io, const char *fn,
 		uint32_t start_addr, int end_data, unsigned step,
 		unsigned src_offs, unsigned src_size) {
 	uint8_t *mem; size_t size = 0;
-	uint32_t data[2], i, n;
-
 	mem = loadfile(fn, &size, 0);
 	if (!mem) ERR_EXIT("loadfile(\"%s\") failed\n", fn);
 	if (size >> 32) ERR_EXIT("file too big\n");
@@ -590,25 +609,8 @@ static void send_file(spdio_t *io, const char *fn,
 			ERR_EXIT("data outside the file\n");
 		size = src_size;
 	}
-	WRITE32_BE(data, start_addr);
-	WRITE32_BE(data + 1, size);
-
-	encode_msg(io, BSL_CMD_START_DATA, data, 4 * 2);
-	send_and_check(io);
-
-	for (i = 0; i < size; i += n) {
-		n = size - i;
-		// n = spd_transcode_max(mem + i, size - i, 2048 - 2 - 6);
-		if (n > step) n = step;
-		encode_msg(io, BSL_CMD_MIDST_DATA, mem + src_offs + i, n);
-		send_and_check(io);
-	}
+	send_buf(io, start_addr, end_data, step, mem + src_offs, size);
 	free(mem);
-
-	if (!end_data) return;
-
-	encode_msg(io, BSL_CMD_END_DATA, NULL, 0);
-	send_and_check(io);
 }
 
 static void erase_flash(spdio_t *io, uint32_t addr, uint32_t size) {
@@ -983,6 +985,8 @@ static int64_t find_partition_size(spdio_t *io, const char *name) {
 
 static uint64_t str_to_size(const char *str) {
 	char *end; int shl = 0; uint64_t n;
+	if ((unsigned)(*str - '0') >= 10)
+		ERR_EXIT("bad command args\n");
 	n = strtoull(str, &end, 0);
 	if (*end) {
 		if (!strcmp(end, "K")) shl = 10;
@@ -999,6 +1003,26 @@ static uint64_t str_to_size(const char *str) {
 	return n << shl;
 }
 
+static uint64_t str_to_addr(const char *str, const char *name, uint32_t base) {
+	uint32_t sh = 32; uint64_t ret;
+	int a, i = 0;
+	do if (!(a = name[i])) {
+		str += i;
+		if (base == ~0u)
+			ERR_EXIT("%s address is unknown\n", name);
+		if (!(a = *str++)) return base;
+		if (a != '+') ERR_EXIT("bad command args\n");
+		sh = 26; /* 64MB */
+		goto found;
+	} while (a == str[i++]);
+	base = 0;
+found:
+	ret = str_to_size(str);
+	if (ret >> sh)
+		ERR_EXIT("address limit reached\n");
+	return ret + base;
+}
+
 #define REOPEN_FREQ 2
 
 int main(int argc, char **argv) {
@@ -1008,13 +1032,14 @@ int main(int argc, char **argv) {
 	int serial;
 #endif
 	spdio_t *io; int ret, i;
-	int wait = 30 * REOPEN_FREQ;
+	int wait = 300 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
 	int verbose = 0, fdl_loaded = 0;
-	uint32_t ram_addr = ~0u;
+	uint32_t fw_addr = ~0u;
 	int keep_charge = 0, end_data = 1, blk_size = 0;
 
 #if USE_LIBUSB
+	(void)tty;
 	ret = libusb_init(NULL);
 	if (ret < 0)
 		ERR_EXIT("libusb_init failed: %s\n", libusb_error_name(ret));
@@ -1064,21 +1089,11 @@ int main(int argc, char **argv) {
 
 	while (argc > 1) {
 		if (!strcmp(argv[1], "fdl")) {
-			const char *fn; uint32_t addr = 0; char *end;
+			const char *fn; uint32_t addr;
 			if (argc <= 3) ERR_EXIT("bad command\n");
 
 			fn = argv[2];
-			end = argv[3];
-			if (!memcmp(end, "ram", 3)) {
-				int a = end[3];
-				if (a != '+' && a)
-					ERR_EXIT("bad command args\n");
-				if (ram_addr == ~0u)
-					ERR_EXIT("ram address is unknown\n");
-				end += 3; addr = ram_addr;
-			}
-			addr += strtoll(end, &end, 0);
-			if (*end) ERR_EXIT("bad command args\n");
+			addr = str_to_addr(argv[3], "ram", fw_addr | 0x04000000);
 
 			if (!fdl_loaded) {
 				// Required for smartphones.
@@ -1132,8 +1147,8 @@ int main(int argc, char **argv) {
 					print_string(stderr, str, len);
 					if (len && !str[len - 1]) {
 						if (strstr(str, "CHIP ID = 0x6530") ||
-								strstr(str, "CHIP ID = 0x6531")) ram_addr = 0x34000000;
-						if (strstr(str, "CHIP ID = 0x6562")) ram_addr = 0x14000000;
+								strstr(str, "CHIP ID = 0x6531")) fw_addr = 0x30000000;
+						if (strstr(str, "CHIP ID = 0x6562")) fw_addr = 0x10000000;
 					}
 				}
 
@@ -1181,11 +1196,23 @@ int main(int argc, char **argv) {
 					blk_size ? blk_size : 1024);
 			argc -= 5; argv += 5;
 
+		} else if (!strcmp(argv[1], "write_word")) {
+			uint64_t addr, data; uint8_t buf[4];
+			if (argc <= 3) ERR_EXIT("bad command\n");
+
+			addr = str_to_addr(argv[2], "fw", fw_addr);
+			data = strtoull(argv[3], NULL, 0);
+			WRITE32_LE(buf, data);
+			if (addr >> 32)
+				ERR_EXIT("32-bit limit reached\n");
+			send_buf(io, addr, end_data, 528, buf, 4);
+			argc -= 3; argv += 3;
+
 		} else if (!strcmp(argv[1], "write_data")) {
 			const char *fn; uint64_t addr, offset, size;
 			if (argc <= 5) ERR_EXIT("bad command\n");
 
-			addr = str_to_size(argv[2]);
+			addr = str_to_addr(argv[2], "fw", fw_addr);
 			offset = str_to_size(argv[3]);
 			size = str_to_size(argv[4]);
 			fn = argv[5];
@@ -1196,10 +1223,10 @@ int main(int argc, char **argv) {
 			argc -= 5; argv += 5;
 
 		} else if (!strcmp(argv[1], "erase_flash")) {
-			const char *fn; uint64_t addr, offset, size;
+			uint64_t addr, size;
 			if (argc <= 3) ERR_EXIT("bad command\n");
 
-			addr = str_to_size(argv[2]);
+			addr = str_to_addr(argv[2], "fw", fw_addr);
 			size = str_to_size(argv[3]);
 			if ((addr | size | (addr + size)) >> 32)
 				ERR_EXIT("32-bit limit reached\n");

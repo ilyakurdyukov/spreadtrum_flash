@@ -66,6 +66,10 @@ void entry_main() {
 	if (_chip == 3) init_sc6530();
 #endif
 
+	// SFC_CS1_START_ADDR:
+	// default is 4(MB), which prevents reading full flash from cs0
+	if (_chip != 1) MEM4(0x20a00200) = 16;
+
 	dl_main();
 }
 

@@ -1,6 +1,6 @@
 
 LIBUSB = 1
-CFLAGS = -O2 -Wall -Wextra -std=c99 -pedantic -Wno-unused
+CFLAGS = -O2 -Wall -Wextra -std=c99 -pedantic
 CFLAGS += -DUSE_LIBUSB=$(LIBUSB)
 APPNAME = spd_dump
 
