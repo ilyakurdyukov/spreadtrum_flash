@@ -864,9 +864,10 @@ static int scan_xml_partitions(const char *fn, uint8_t *buf, size_t buf_size) {
 	return found;
 }
 
-static void partition_list(spdio_t *io, const char *fn) {
+static void partition_list(spdio_t *io, const char *fn, unsigned sh) {
 	unsigned size, i, n; char name[37];
 	int ret; FILE *fo = NULL; uint8_t *p;
+	uint32_t mask = 0;
 
 	encode_msg(io, BSL_CMD_READ_PARTITION, NULL, 0);
 	send_msg(io);
@@ -888,12 +889,19 @@ static void partition_list(spdio_t *io, const char *fn) {
 		ret = copy_from_wstr(name, 36, (uint16_t*)p);
 		if (ret) ERR_EXIT("bad partition name\n");
 		size = READ32_LE(p + 0x48);
-		DBG_LOG("[%d] %s, %u (%u)\n", i, name, size >> 10, size);
+		mask |= size;
+		DBG_LOG("[%d] %s, %u (%u)\n", i, name, size >> sh, size);
 		if (fo) {
 			fprintf(fo, "    <Partition id=\"%s\" size=\"", name);
 			if (i + 1 == n) fprintf(fo, "0x%x\"/>\n", ~0);
-			else fprintf(fo, "%u\"/>\n", size >> 10);
+			else fprintf(fo, "%u\"/>\n", size >> sh);
 		}
+	}
+	if (mask & ((1 << sh) - 1)) {
+		DBG_LOG("The unit size is wrong!\n");
+		if (!(mask & 0x7f))
+			DBG_LOG("The partition table probably uses 4K sectors, use partition_list_4k command.\n");
+		fprintf(fo, "<error>Wrong unit size, do not use this table!</error>\n");
 	}
 	if (fo) {
 		fprintf(fo, "</Partitions>\n");
@@ -1270,7 +1278,12 @@ int main(int argc, char **argv) {
 
 		} else if (!strcmp(argv[1], "partition_list")) {
 			if (argc <= 2) ERR_EXIT("bad command\n");
-			partition_list(io, argv[2]);
+			partition_list(io, argv[2], 10);
+			argc -= 2; argv += 2;
+
+		} else if (!strcmp(argv[1], "partition_list_4k")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			partition_list(io, argv[2], 7);
 			argc -= 2; argv += 2;
 
 		} else if (!strcmp(argv[1], "repartition")) {
