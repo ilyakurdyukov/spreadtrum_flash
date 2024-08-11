@@ -76,6 +76,20 @@ static int data_start(uint8_t *pkt) {
 	return BSL_REP_ACK;
 }
 
+static int write_and_check(int cs, int addr, void *buf, unsigned size, uint32_t fw_addr) {
+	uint8_t *d, *s; int i;
+	sfc_write(cs, addr, buf, size);
+	sfc_spiread(cs);
+	d = (uint8_t*)fw_addr + addr + size;
+	s = (uint8_t*)buf + size;
+	i = 0 - size;
+	if (!(((uintptr_t)buf | addr) & 3))
+		for (; i <= -4; i += 4)
+			if (*(uint32_t*)&d[i] != *(uint32_t*)&s[i]) return 1;
+	for (; i; i++) if (d[i] != s[i]) return 1;
+	return 0;
+}
+
 static int data_midst(uint8_t *pkt) {
 	unsigned len = READ16_BE(pkt + 2);
 	unsigned remain = dl_status.size - dl_status.recv;
@@ -132,12 +146,13 @@ static int data_midst(uint8_t *pkt) {
 				DBG_LOG("sfc_erase %u, 0x%x\n", cs, addr2);
 				sfc_erase(cs, addr2, ERASE_CMD, 3);
 				DBG_LOG("sfc_write %u, 0x%x, %p, 0x%x\n", cs, addr2, buf, blk);
-				sfc_write(cs, addr2, buf, blk);
+				if (write_and_check(cs, addr2, buf, blk, fw_addr))
+					return BSL_REP_OPERATION_FAILED;
 			} else if (diff) {
 				DBG_LOG("sfc_write %u, 0x%x, %p, 0x%x\n", cs, addr - fw_addr, src, n);
-				sfc_write(cs, addr - fw_addr, src, n);
+				if (write_and_check(cs, addr - fw_addr, src, n, fw_addr))
+					return BSL_REP_OPERATION_FAILED;
 			}
-			sfc_spiread(cs);
 			addr += n; src += n;
 		}
 #else
@@ -230,6 +245,9 @@ static int erase_flash(uint8_t *pkt) {
 				DBG_LOG("sfc_erase %u, 0x%x\n", cs, addr - fw_addr);
 				sfc_erase(cs, addr - fw_addr, ERASE_CMD, 3);
 				sfc_spiread(cs);
+				for (i = 0; i < blk; i++)
+					if (~*(uint32_t*)(addr + i)) break;
+				if (i != blk) return BSL_REP_OPERATION_FAILED;
 			}
 		} while ((addr += blk) != end);
 	}

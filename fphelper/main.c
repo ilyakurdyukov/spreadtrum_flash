@@ -456,8 +456,9 @@ static int check_keymap(const void *buf, unsigned size) {
 		if (a == -1) { empty++; empty2 += (i & 7) >= 6; continue; }
 		// exception: Vertex M115
 		if ((unsigned)(a - 0x70) < 3) continue;
-		// exception: BQ3586
-		if (a == 0x69) continue;
+		// exception: BQ3586 (0x69)
+		// exception: Texet TM-122, TM-130 (0x69..0x6c)
+		if ((unsigned)(a - 0x69) < 4) continue;
 		if ((unsigned)(a - 1) > (unsigned)0x39 - 1) break;
 	}
 	// printf("!!! check_keymap: %d, %d, %d\n", i, empty, empty2);
@@ -477,14 +478,21 @@ static int check_keymap(const void *buf, unsigned size) {
 	M(0x35, 5) M(0x36, 6) M(0x37, 7) M(0x38, 8) M(0x39, 9)
 
 #define X(num, name) num,
-static const int16_t keypad_ids[] = { KEYPAD_ENUM(X) -1 };
+static const uint16_t keypad_ids[] = { KEYPAD_ENUM(X) -1 };
 #undef X
 #define X(num, name) { #name },
 static const char keypad_names[][8] = { KEYPAD_ENUM(X) };
 #undef X
 
+static const char* keypad_getname(unsigned a) {
+	unsigned i;
+	for (i = 0; keypad_ids[i] != 0xffff; i++)
+		if (keypad_ids[i] == a) return keypad_names[i];
+	return NULL;
+}
+
 static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags) {
-	FILE *fo;
+	FILE *fo; unsigned nrow;
 	if (!clues.keymap_addr) return;
 	addr = clues.keymap_addr - addr;
 	if (size <= addr) return;
@@ -494,14 +502,28 @@ static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags)
 	printf("0x%x: keymap", clues.keymap_addr);
 	clues.keymap_addr = 0;
 	do {
-		int a = *(int16_t*)(buf + addr), i;
-		if (a == -1) break;
-		printf(", bootkey = 0x%02x", a);
-		for (i = 0; keypad_ids[i] != -1; i++)
-			if (keypad_ids[i] == a) {
-				printf(" (%s)", keypad_names[i]);
-				break;
-			}
+		uint16_t *p = (uint16_t*)(buf + addr);
+		unsigned a, i; const char *name;
+		nrow = 8;
+		if (clues.chip == 1) {
+			for (i = 0; i < 40; i += 8)
+				if (*(int32_t*)&p[i + 6] != -1) break;
+			if (i != 40) nrow = 5;
+			else printf(", rows = 8");
+		}
+		if ((a = *p) != 0xffff) {
+			printf(", bootkey = 0x%02x", a);
+			name = keypad_getname(a);
+			if (name) printf(" (%s)", name);
+		}
+		printf(", sdboot keys = 0x%02x 0x%02x 0x%02x (",
+				p[1], p[nrow], p[nrow + 1]);
+		for (i = 1; i < 4; i++) {
+			a = p[(i & 1) + (i >> 1) * nrow];
+			name = "---";
+			if (a != 0xffff) name = keypad_getname(a);
+			printf("%s%s", name ? name : "???", i < 3 ? ", " : ")\n");
+		}
 	} while (0);
 	printf("\n");
 
@@ -515,19 +537,66 @@ static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags)
 	}
 }
 
+static int check_flash_list(uint32_t *p, unsigned size) {
+	uint32_t a; unsigned i = 0, j;
+	for (;; i++, p += 8) {
+		if (size < 0x20) return -1;
+		size -= 0x20;
+		a = p[0];
+		if (!(a & 0xffff)) break;
+		a |= p[1] | p[2] | p[3] | p[4];
+		if (a & 0xff00ff00) return -1;
+		if (p[5] & 0xfefeff00) return -1;
+	}
+	for (j = 0; j < 8; j++)
+		if (p[j]) return -1;
+	return i;
+}
+
 static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 	unsigned i, size_req = 0x1c;
 	unsigned size2, ps_size;
 	char name[128], drps_cnt[4] = { 0 };
-	if (size >= 0x24 && *(uint32_t*)(buf + 0x20) == 0x36353632) {
-		printf("0x20: found SC6531E firmware marker\n");
-		clues.chip = 1;
-	}
 	size &= ~3;
 	if (size < size_req) return;
 	ps_size = size;
 	for (i = 0; i < size - size_req + 1; i += 4) {
 		uint32_t *p = (uint32_t*)(buf + i);
+
+		if (!(i & 0xfff)) do {
+			uint32_t a, *p2;
+			int chip = 0, j, k;
+			size2 = size - i;
+			if (size2 < 0xa4) break;
+			a = p[0];
+			if (a != 0xe59ff018) {
+				if (a != 0xe59ff01c || p[8] != 0x36353632) break;
+				chip = 1;
+			}
+			for (j = 1; j < 8; j++)
+				if (p[j] != a) break;
+			if (j != 8) break;
+			p2 = p + (chip == 1 ? 9 : 8);
+			printf("0x%x: firmware start, entry = 0x%x\n", i, p2[0]);
+			if (chip == 1) {
+				printf("0x%x: found SC6531E firmware marker\n", i + 0x20);
+				clues.chip = chip;
+			}
+			a = p2[8];
+			if (a && a != 0xe92d400e) break;
+			p2 += 16;
+			size2 -= 0x60 - (chip == 1 ? 4 : 0);
+			k = check_flash_list(p2, size2);
+			if (k < 1) break;
+			printf("0x%x: supported flash, num = %u\n", (int)((uint8_t*)p2 - buf), k);
+			for (j = 0; j < k; j++, p2 += 8) {
+				uint16_t *p3 = (uint16_t*)p2;
+				uint32_t id = p3[0] << 16 | p3[1] << 8 | p3[2];
+				printf("%u: flash id = 0x%x, layout = 0x%x, config = 0x%x\n",
+						j, id, p2[6], p2[7]);
+			}
+		} while (0);
+
 		do {
 			if (p[0] != 0xe8ba000f) break;
 			if (p[1] != 0xe24fe018) break;
@@ -1172,7 +1241,7 @@ static int sdboot_helper_scan(uint8_t *buf, unsigned size,
 			if (size2 < n * 0x14) break;
 			for (j = 0; j < n; j++, p += 5)
 				if (p[0] != 0x424c4f43) break;
-			end = (uint8_t*)p - buf;
+			if (j == n) end = (uint8_t*)p - buf;
 		} while (0);
 
 		do {
@@ -1213,10 +1282,10 @@ static void sdboot_helper(uint8_t *buf, unsigned size) {
 		uint32_t a, *p = (uint32_t*)buf;
 		unsigned i, chip = 0, end = 0;
 		a = p[0];
-		if (a == 0xe59ff01c) {
-			if (p[8] != 0x36353632) break;
+		if (a != 0xe59ff018) {
+			if (a != 0xe59ff01c || p[8] != 0x36353632) break;
 			chip = 1;
-		} else if (a != 0xe59ff018) break;
+		}
 		for (i = 1; i < 8; i++)
 			if (p[i] != a) break;
 		if (i != 8) break;
@@ -1304,6 +1373,15 @@ int main(int argc, char **argv) {
 	mem = loadfile(argv[1], &size);
 	if (!mem) ERR_EXIT("loadfile failed\n");
 	argc -= 1; argv += 1;
+
+	/* Detect dump larger than flash size. */
+	if (size >= 5 << 20) {
+		if (!memcmp(mem, mem + (4 << 20), size - (4 << 20))) {
+			size = 4 << 20;
+		} else if (size >= 9 << 20 && !memcmp(mem, mem + (8 << 20), size - (8 << 20))) {
+			size = 8 << 20;
+		}
+	}
 
 	while (argc > 1) {
 		if (!strcmp(argv[1], "scan")) {

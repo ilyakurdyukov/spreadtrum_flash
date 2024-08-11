@@ -24,6 +24,10 @@ Use this command to run a data scan and extract FAT disk images:
 
 * `extract_data` command can create: `fat_%u.img`
 
+This command will print hints on how to flash the `sdboot` binary to the phone:
+
+`./fphelper flash.bin sdboot`  
+
 These commands decode compressed streams and require stream offset:
 
 `./fphelper flash.bin {copy|lzdec2|lzdec3|lzmadec|lzmadec_sprd} src_offset dst_size output.bin`  

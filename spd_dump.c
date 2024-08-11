@@ -900,7 +900,7 @@ static void partition_list(spdio_t *io, const char *fn, unsigned sh) {
 	if (mask & ((1 << sh) - 1)) {
 		DBG_LOG("The unit size is wrong!\n");
 		if (!(mask & 0x7f))
-			DBG_LOG("The partition table probably uses 4K sectors, use partition_list_4k command.\n");
+			DBG_LOG("The partition table probably uses 4KB sectors, use partition_list_4k command.\n");
 		fprintf(fo, "<error>Wrong unit size, do not use this table!</error>\n");
 	}
 	if (fo) {
