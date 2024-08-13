@@ -654,7 +654,7 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 				printf("0x%x: COLB, name = \"%s\", offs = 0x%x (0x%x), size = 0x%x, 0x%x\n",
 						(unsigned)((uint8_t*)p2 - buf), name, p2[2], i + p2[2], p2[3], p2[4]);
 #if WITH_LZMADEC
-				if (flags & 1) {
+				do {
 					const char *s = "unknown"; int k = 0;
 					switch (p2[1]) {
 					case 0x494d4147: s = "kern"; k = 1; break;
@@ -662,11 +662,19 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 					case 0x7253736f: s = "rsrc"; k = 3; break;
 					}
 					clues.drps_type = k;
-					k = drps_cnt[k]++;
-					if (!k) snprintf(name, sizeof(name), "%s.bin", s);
-					else snprintf(name, sizeof(name), "%s%u.bin", s, k);
-					drps_decode(buf, size, i, j, name);
-				}
+					if (flags & 1) {
+						k = drps_cnt[k]++;
+						if (!k) snprintf(name, sizeof(name), "%s.bin", s);
+						else snprintf(name, sizeof(name), "%s%u.bin", s, k);
+						s = name;
+					} else {
+						if (k != 1 || !clues.kern_addr) break;
+						if (clues.keymap_addr < clues.kern_addr) break;
+						// Decode to scan keymap.
+						s = NULL;
+					}
+					drps_decode(buf, size, i, j, s);
+				} while (0);
 #endif
 			}
 		} while (0);
@@ -1161,8 +1169,10 @@ static int drps_decode(uint8_t *mem, size_t size,
 		mem += colb_offs;
 		p = (uint32_t*)mem;
 
-		fo = fopen(outfn, "wb");
-		if (!fo) ERR_EXIT("fopen(output) failed\n");
+		if (outfn) {
+			fo = fopen(outfn, "wb");
+			if (!fo) ERR_EXIT("fopen(output) failed\n");
+		}
 
 		if (*p == 0x4e504143) {
 			uint32_t data_size = p[2], num, offs, next;
@@ -1190,7 +1200,7 @@ static int drps_decode(uint8_t *mem, size_t size,
 	size2 = READ32_LE(mem + 5); \
 	if (size2 > dst_size) FATAL(); \
 	result = sprd_lzmadec(mem, &src_size, dst, size2); \
-	fwrite(dst, 1, result, fo);
+	if (fo) fwrite(dst, 1, result, fo);
 
 				RUN_LZMADEC(mem + offs)
 				if (result != size2) {
@@ -1208,10 +1218,10 @@ static int drps_decode(uint8_t *mem, size_t size,
 				FATAL();
 			}
 			if (clues.drps_type == 1 && clues.kern_addr)
-				check_keymap2(dst, result, clues.kern_addr, 1);
+				check_keymap2(dst, result, clues.kern_addr, outfn ? 1 : 0);
 #undef RUN_LZMADEC
 		}
-		fclose(fo);
+		if (fo) fclose(fo);
 	}
 	free(dst);
 	return 0;
