@@ -457,12 +457,13 @@ static int check_keymap(const void *buf, unsigned size) {
 		// exception: Vertex M115
 		if ((unsigned)(a - 0x70) < 3) continue;
 		// exception: BQ3586 (0x69)
-		// exception: Texet TM-122, TM-130 (0x69..0x6c)
-		if ((unsigned)(a - 0x69) < 4) continue;
+		// exception: Texet TM-122, TM-130, TM-D324 (0x69..0x6d)
+		if ((unsigned)(a - 0x69) < 5) continue;
 		if ((unsigned)(a - 1) > (unsigned)0x39 - 1) break;
 	}
 	// printf("!!! check_keymap: %d, %d, %d\n", i, empty, empty2);
-	if (i < 40 || empty < i - 32) return 0;
+	// Olmio E35, Texet TM-D324: size = 35
+	if (i < (clues.chip == 1 ? 35 : 40) || empty < i - 32) return 0;
 	if (i > 40 && empty2 != i >> 2) return 0;
 	return i << 1;
 }
@@ -470,10 +471,10 @@ static int check_keymap(const void *buf, unsigned size) {
 #define KEYPAD_ENUM(M) \
 	M(0x01, DIAL) \
 	M(0x04, UP) M(0x05, DOWN) M(0x06, LEFT) M(0x07, RIGHT) \
-	M(0x08, LSOFT) M(0x09, RSOFT) \
-	M(0x0d, CENTER) \
-	M(0x23, HASH) M(0x24, VOLUP) M(0x25, VOLDOWN) \
-	M(0x29, EXTRA) M(0x2a, STAR) M(0x2b, PLUS) \
+	M(0x08, LSOFT) M(0x09, RSOFT) M(0x0d, CENTER) \
+	M(0x0e, CAMERA) M(0x1d, EXT_1D) M(0x1f, EXT_1F) \
+	M(0x21, EXT_21) M(0x23, HASH) M(0x24, VOLUP) M(0x25, VOLDOWN) \
+	M(0x29, EXT_29) M(0x2a, STAR) M(0x2b, PLUS) M(0x2d, MINUS) \
 	M(0x30, 0) M(0x31, 1) M(0x32, 2) M(0x33, 3) M(0x34, 4) \
 	M(0x35, 5) M(0x36, 6) M(0x37, 7) M(0x38, 8) M(0x39, 9)
 
@@ -1374,6 +1375,131 @@ end:		j += 0x1000;
 	printf("sdboot: unsupported firmware\n");
 }
 
+static void lcd_init_print(int cmd, int ndata, uint8_t *data) {
+	int i;
+	if (cmd < 0) {
+		if (!ndata) return;
+		printf("LCM_DATA(%u),", ndata);
+	} else {
+		printf("LCM_CMD(0x%02x, %u),", cmd, ndata);
+	}
+	if (ndata) {
+		printf(" ");
+		for (i = 0; i < ndata; i++)
+			printf("0x%02x,", data[i]);
+	}
+	printf("\n");
+}
+
+// decompiles LCD init code
+static void lcd_init_dec(uint8_t *buf, unsigned size, unsigned pos, unsigned mode) {
+	int reg[8], flags = 0;
+	uint16_t *p, *end;
+	int badptr = -1, lcm_wait = badptr, lcm_cmd = badptr, lcm_data = badptr;
+	int last_cmd = -1, ndata = 0;
+	uint8_t data[31];
+
+	if (mode >= 2) { printf("!!! unknown mode\n"); return; }
+	if (pos >= size) { printf("!!! pos >= size\n"); return; }
+	pos &= ~1;
+	p = (uint16_t*)(buf + pos);
+	end = (uint16_t*)&buf[size & ~1];
+#define CUR_POS (int)((uint8_t*)p - buf)
+	for (;;) {
+		int a, b, c;
+		if (p == end) break;
+		a = *p++;
+		// MOV Rd, imm8
+		if ((a & 0xf800) == 0x2000) {
+			b = a >> 8 & 7;
+			if (flags >> b & 1) break;
+			reg[b] = a & 0xff;
+			flags |= 1 << b;
+		// MOV Rd, Rm
+		} else if ((a & 0xffc0) == 0) {
+			b = a & 7;
+			c = a >> 3 & 7;
+			if (!(flags >> c & 1)) break;
+			reg[b] = reg[a >> 3 & 7];
+			flags |= 1 << b;
+		// BLX
+		} else if ((a & 0xf800) == 0xf000) {
+			b = (int32_t)(a << 21) >> 21;
+			if (p == end) break;
+			a = *p++;
+			if ((a & 0xf801) != 0xe800) break;
+			b = (((uint8_t*)p - buf) + (b << 12 | (a & 0x7ff) << 1)) & ~3;
+			c = flags & 15;
+			if (c & (c + 1)) {
+				printf("!!! 0x%x: unexpected call args\n", CUR_POS - 4);
+				break;
+			}
+			if (mode == 1) {
+				if (c == 1) {
+					if (lcm_wait == badptr) lcm_wait = b;
+					if (b != lcm_wait) {
+						printf("!!! 0x%x: unexpected call\n", CUR_POS - 4);
+						break;
+					}
+					printf("LCM_DELAY(%u)\n", reg[0]);
+				} else if (c == 3) {
+					if (reg[1] != 0) {
+						printf("!!! 0x%x: r1 != 0\n", CUR_POS - 4);
+						break;
+					}
+					if (lcm_cmd == badptr) lcm_cmd = b;
+					if (b == lcm_cmd) {
+						if (last_cmd >= 0 || ndata) {
+							lcd_init_print(last_cmd, ndata, data);
+							ndata = 0;
+						}
+						last_cmd = reg[0];
+					} else {
+						if (lcm_data == badptr) lcm_data = b;
+						if (b == lcm_data) {
+							if (ndata == sizeof(data)) {
+								lcd_init_print(last_cmd, ndata, data);
+								ndata = 0; last_cmd = -1;
+							}
+							data[ndata++] = reg[0];
+						} else {
+							printf("!!! 0x%x: unexpected call\n", CUR_POS - 4);
+							break;
+						}
+					}
+				} else {
+					printf("!!! 0x%x: unexpected call\n", CUR_POS - 4);
+					break;
+				}
+			} else {
+				printf("blx_%x(", b);
+				for (b = 0; c >> b & 1; b++)
+					printf("%s0x%02x", b ? ", " : "", reg[b]);
+				printf(")\n");
+			}
+			flags &= ~15;
+		// B
+		} else if ((a & 0xf800) == 0xe000) {
+			a = (int32_t)(a << 21) >> 21;
+			if (a < 0) break;
+			a++;
+			if (end - p < a) {
+				printf("!!! jump out of the buffer\n");
+				break;
+			}
+			p += a;
+		} else {
+			printf("!!! 0x%x: unknown op 0x%04x\n", CUR_POS - 2, a);
+			break;
+		}
+	}
+#undef CUR_POS
+	if (mode == 1) {
+		lcd_init_print(last_cmd, ndata, data);
+		printf("LCM_END\n");
+	}
+}
+
 int main(int argc, char **argv) {
 	uint8_t *mem; size_t size = 0;
 
@@ -1406,6 +1532,12 @@ int main(int argc, char **argv) {
 		} else if (!strcmp(argv[1], "sdboot")) {
 			sdboot_helper(mem, size);
 			argc -= 1; argv += 1;
+		} else if (!strcmp(argv[1], "lcd_init_dec")) {
+			unsigned pos;
+			if (argc <= 3) ERR_EXIT("bad command\n");
+			pos = strtoul(argv[2], NULL, 0);
+			lcd_init_dec(mem, size, pos, atoi(argv[3]));
+			argc -= 3; argv += 3;
 		} else if (!strcmp(argv[1], "copy")) {
 			if (run_decoder(mem, size, argc, argv, &decode_copy)) return 1;
 			argc -= 4; argv += 4;
