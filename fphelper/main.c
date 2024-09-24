@@ -1441,7 +1441,9 @@ static void lcd_init_dec(uint8_t *buf, unsigned size, unsigned pos, unsigned mod
 						printf("!!! 0x%x: unexpected call\n", CUR_POS - 4);
 						break;
 					}
-					printf("LCM_DELAY(%u)\n", reg[0]);
+					lcd_init_print(last_cmd, ndata, data);
+					ndata = 0; last_cmd = -1;
+					printf("LCM_DELAY(%u),\n", reg[0]);
 				} else if (c == 3) {
 					if (reg[1] != 0) {
 						printf("!!! 0x%x: r1 != 0\n", CUR_POS - 4);
