@@ -50,15 +50,22 @@ static void sfc_unlock(void) {
 	flash_id = id = sfc_readid(cs);
 	DBG_LOG("sfc: id = 0x%06x\n", id);
 	id1 = id >> 16;
-	if (id1 == 0xef || /* Winbond */
-			id1 == 0xc8) { /* GigaDevice */
+	do {
+		unsigned mask, status;
+		mask = 0xfc;
+		if (id1 == 0xef) goto match; /* Winbond */
+		if (id1 == 0xc8) goto match; /* GigaDevice */
+		mask = 0xbc;
+		if (id1 == 0xc2) goto match; /* Macronix */
+		break;
+match:
 		// 4MB (32Mbit) chips use the value 0x38,
 		// which means the first 2MB are locked.
-		unsigned status = sfc_read_status(cs);
+		status = sfc_read_status(cs);
 		DBG_LOG("sfc: status = 0x%02x\n", status);
-		if (status & 0xfc)
-			sfc_write_status(cs, status & ~0xfc);
-	}
+		if (status & mask)
+			sfc_write_status(cs, status & ~mask);
+	} while (0);
 	sfc_spiread(cs);
 }
 

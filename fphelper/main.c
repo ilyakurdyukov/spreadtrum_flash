@@ -445,21 +445,21 @@ static int drps_decode(uint8_t *mem, size_t size,
 		unsigned drps_offs, unsigned index, const char *outfn);
 
 static int check_keymap(const void *buf, unsigned size) {
-	const int16_t *s = (const int16_t*)buf;
-	int a, i, n, empty = 0, empty2 = 0;
+	const uint16_t *s = (const uint16_t*)buf;
+	unsigned a, i, n, empty = 0, empty2 = 0;
 	n = size >> 1;
-	if (n < 40) return 0;
-	a = clues.chip == 1 ? 40 : 64;
+	if (n < 35) return 0;
+	a = clues.chip == 1 ? 48 : 64;
 	if (n >= a) n = a;
 	for (i = 0; i < n; i++) {
 		a = s[i];
-		if (a == -1) { empty++; empty2 += (i & 7) >= 6; continue; }
+		if (a == 0xffff) { empty++; empty2 += (i & 7) >= 6; continue; }
 		// exception: Vertex M115
-		if ((unsigned)(a - 0x70) < 3) continue;
+		if (a - 0x70 < 3) continue;
 		// exception: BQ3586 (0x69)
 		// exception: Texet TM-122, TM-130, TM-D324 (0x69..0x6d)
-		if ((unsigned)(a - 0x69) < 5) continue;
-		if ((unsigned)(a - 1) > (unsigned)0x39 - 1) break;
+		if (a - 0x69 < 5) continue;
+		if (a - 1 >= 0x39) break;
 	}
 	// printf("!!! check_keymap: %d, %d, %d\n", i, empty, empty2);
 	// Olmio E35, Texet TM-D324: size = 35
@@ -474,7 +474,8 @@ static int check_keymap(const void *buf, unsigned size) {
 	M(0x08, LSOFT) M(0x09, RSOFT) M(0x0d, CENTER) \
 	M(0x0e, CAMERA) M(0x1d, EXT_1D) M(0x1f, EXT_1F) \
 	M(0x21, EXT_21) M(0x23, HASH) M(0x24, VOLUP) M(0x25, VOLDOWN) \
-	M(0x29, EXT_29) M(0x2a, STAR) M(0x2b, PLUS) M(0x2d, MINUS) \
+	M(0x29, EXT_29) M(0x2a, STAR) M(0x2b, PLUS) \
+	M(0x2c, EXT_2C) M(0x2d, MINUS) M(0x2f, EXT_2F) \
 	M(0x30, 0) M(0x31, 1) M(0x32, 2) M(0x33, 3) M(0x34, 4) \
 	M(0x35, 5) M(0x36, 6) M(0x37, 7) M(0x38, 8) M(0x39, 9)
 
@@ -630,9 +631,9 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			if (p[11] != 0x5441494c) break;
 			id = (p[2] & 0xff) << 16 | (p[3] & 0xff) << 8 | (p[4] & 0xff);
 			printf("0x%x: HGAM.CFS, cs0_id = 0x%06x, cs0_size = 0x%x", i, id, p[5]);
-			if (p[9]) {
+			if (p[9] && ~p[9]) {
 				id = (p[6] & 0xff) | (p[7] & 0xff) << 8 | (p[8] & 0xff) << 16;
-				printf("cs1_id = 0x%06x, cs1_size = 0x%x", id, p[9]);
+				printf(", cs1_id = 0x%06x, cs1_size = 0x%x", id, p[9]);
 			}
 			printf("\n");
 		} while (0);
