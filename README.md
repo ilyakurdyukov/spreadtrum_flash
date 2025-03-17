@@ -131,7 +131,7 @@ SUBSYSTEMS=="usb", ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="0003", MODE="0666
 2. [RDA memory dumper](https://github.com/ihewitt/ivrtrack/blob/main/util/dump.c)
 3. [sharkalaka - FDL1/FDL2 loader (in Python)](https://github.com/fxsheep/sharkalaka)
 4. [uwpflash (in C)](https://github.com/Mani-Sadhasivam/uwpflash)
-5. [Opus Spreadtrum (protocol explanation)](https://chronovir.us/2021/12/18/Opus-Spreadtrum/)
+5. [Opus Spreadtrum (protocol explanation)](https://archive.luxferre.top/chronovirus/2021/12/18/Opus-Spreadtrum/)
 6. [uniflash - from the author of Opus Spreadtrum (in Python)](https://gitlab.com/suborg/uniflash)
 7. [sprdproto - another tool (in C)](https://github.com/kagaimiq/sprdproto)
 8. [bzpwork - tool for packing/unpacking Spreadtrum firmware (in C)](https://github.com/ilyazx/bzpwork)
