@@ -1,3 +1,6 @@
+#define _GNU_SOURCE 1
+#define _FILE_OFFSET_BITS 64
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -23,7 +26,9 @@ typedef struct {
   uint32_t struct_size;
 	uint16_t id[256];
 	uint16_t name[256];
-	uint16_t unknown1[256];
+	uint16_t unknown1[256 - 4];
+	uint32_t size_high;
+	uint32_t pac_offset_high;
 	uint32_t size;
 	uint32_t type; // 0 - operation, 1 - file, 2 - xml, 0x101 - fdl
 	uint32_t flash_use; // 1 - used during flashing process							
@@ -178,12 +183,15 @@ int main(int argc, char **argv) {
 	if (mode == MODE_LIST || mode == MODE_EXTRACT)
 	for (i = 0; i < head.file_count; i++) {
 		sprd_file_t file; int j;
+		long long file_size, pac_offset;
 		READ1(file);
 		if (file.struct_size != sizeof(sprd_file_t))
 			ERR_EXIT("unexpected struct size\n");
 
+		file_size = (long long)file.size_high << 32 | file.size;
+		pac_offset = (long long)file.pac_offset_high << 32 | file.pac_offset;
 		if (mode == MODE_EXTRACT)
-			if (!file.name[0] || !file.pac_offset || !file.size) continue;
+			if (!file.name[0] || !pac_offset || !file_size) continue;
 
 		for (j = 0; j < argc; j++)
 			if (!compare_u8_u16(0, argv[j], file.name, 256) || 
@@ -194,10 +202,10 @@ int main(int argc, char **argv) {
 
 		if (mode == MODE_LIST) {
 			printf(file.type > 9 ? "type = 0x%x" : "type = %u", file.type);
-			if (file.size)
-				printf(", size = 0x%x", file.size);
-			if (file.pac_offset)
-				printf(", offset = 0x%x", file.pac_offset);
+			if (file_size)
+				printf(", size = 0x%llx", file_size);
+			if (pac_offset)
+				printf(", offset = 0x%llx", pac_offset);
 
 			if (file.addr_num <= 5)
 				for (j = 0; j < (int)file.addr_num; j++) {
@@ -216,12 +224,12 @@ int main(int argc, char **argv) {
 			}
 			printf("\n");
 		} else {
-			FILE *fo; uint32_t l, n;
+			FILE *fo; uint64_t l; uint32_t n;
 
 			CONV_STR(file.name);
 			printf("%s\n", str_buf);
 
-			if (fseek(fi, file.pac_offset, SEEK_SET))
+			if (fseeko(fi, pac_offset, SEEK_SET))
 				ERR_EXIT("fseek failed\n");
 
 			if (check_path(str_buf) < 1) {
@@ -238,7 +246,7 @@ int main(int argc, char **argv) {
 			if (!fo)
 				ERR_EXIT("fopen(output) failed\n");
 
-			l = file.size;
+			l = file_size;
 			for (; l; l -= n) {
 				n = l > chunk ? chunk : l;
 				READ(buf, n, "chunk");
