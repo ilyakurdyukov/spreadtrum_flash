@@ -571,14 +571,17 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			size2 = size - i;
 			if (size2 < 0xa4) break;
 			a = p[0];
-			if (a != 0xe59ff018) {
-				if (a != 0xe59ff01c || p[8] != 0x36353632) break;
+			k = a - 0xe59ff000 + 8;
+			if (k != 0x20) {
+				// common SC6531E: 0x24
+				// Nokia SC6531E: 0x3e0
+				if ((k != 0x24 && k != 0x3e0) || p[8] != 0x36353632) break;
 				chip = 1;
 			}
 			for (j = 1; j < 8; j++)
 				if (p[j] != a) break;
 			if (j != 8) break;
-			p2 = p + (chip == 1 ? 9 : 8);
+			p2 = (uint32_t*)((uint8_t*)p + k);
 			printf("0x%x: firmware start, entry = 0x%x\n", i, p2[0]);
 			if (chip == 1) {
 				printf("0x%x: found SC6531E firmware marker\n", i + 0x20);
@@ -1292,16 +1295,18 @@ static void sdboot_helper(uint8_t *buf, unsigned size) {
 	if (size < 0x1000) return;
 	do {
 		uint32_t a, *p = (uint32_t*)buf;
-		unsigned i, chip = 0, end = 0;
+		uint32_t entry_offs;
+		unsigned i, k, chip = 0, end = 0;
 		a = p[0];
-		if (a != 0xe59ff018) {
-			if (a != 0xe59ff01c || p[8] != 0x36353632) break;
+		entry_offs = k = a - 0xe59ff000 + 8;
+		if (k != 0x20) {
+			if ((k != 0x24 && k != 0x3e0) || p[8] != 0x36353632) break;
 			chip = 1;
 		}
 		for (i = 1; i < 8; i++)
 			if (p[i] != a) break;
 		if (i != 8) break;
-		entry = p[chip == 1 ? 9 : 8];
+		entry = *(uint32_t*)((uint8_t*)p + k);
 		if (entry >= size || (entry & 3) || entry < 0x40) break;
 		p = (uint32_t*)(buf + entry);
 		if (p[-9] == 0x3d3d3d0a && p[-2] == 0x0a3d3d &&
@@ -1339,7 +1344,6 @@ end:		j += 0x1000;
 		else if (!jump_buf) break;
 		printf("\nThe instructions below are valid only for this firmware!\n");
 		{
-			uint32_t entry_offs = chip == 1 ? 0x24 : 0x20;
 			char sdboot0[64], sdboot1[64];
 			if (sdboot) {
 				snprintf(sdboot0, sizeof(sdboot0), "0x%x", sdboot);
