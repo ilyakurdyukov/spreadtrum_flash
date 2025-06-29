@@ -524,7 +524,7 @@ static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags)
 			a = p[(i & 1) + (i >> 1) * nrow];
 			name = "---";
 			if (a != 0xffff) name = keypad_getname(a);
-			printf("%s%s", name ? name : "???", i < 3 ? ", " : ")\n");
+			printf("%s%s", name ? name : "???", i < 3 ? ", " : ")");
 		}
 	} while (0);
 	printf("\n");
@@ -553,6 +553,54 @@ static int check_flash_list(uint32_t *p, unsigned size) {
 	for (j = 0; j < 8; j++)
 		if (p[j]) return -1;
 	return i;
+}
+
+static uint32_t pinmap_findval(uint32_t *p, uint32_t x) {
+	uint32_t a;
+	do if ((a = *p) == x) return p[1]; while ((p += 2, ~a));
+	return a;
+}
+
+static void pinmap_info(int chip, uint32_t *pinmap) {
+#define PRINTPIN(x, s) if (~x) printf("0x%x" s, x); else printf("???" s);
+	if (chip == 1) {
+		uint32_t x = 0x8c000138;
+		uint32_t spi1_di = pinmap_findval(pinmap, x);
+		uint32_t spi1_clk = pinmap_findval(pinmap, x + 4);
+		uint32_t spi1_cs = pinmap_findval(pinmap, x + 12);
+		uint32_t spi1_cd = pinmap_findval(pinmap, x + 16);
+		printf("pinmap: LCD pins = ");
+		PRINTPIN(spi1_di, ", ")
+		PRINTPIN(spi1_clk, ", ")
+		PRINTPIN(spi1_cs, ", ")
+		PRINTPIN(spi1_cd, "\n")
+		if ((spi1_clk & 0x3fff) == 0x2004) {
+			int mode = 3;
+			if ((spi1_di & 0x3fff) == 0x2074) mode = 1;
+			printf("guess: SPI1 display, mode = %u\n", mode);
+		}
+	}
+	if (chip == 1) {
+		uint32_t x = 0x8c00009c;
+		uint32_t sd_clk = pinmap_findval(pinmap, x + 20);
+		uint32_t sd_cmd = pinmap_findval(pinmap, x + 16);
+		uint32_t sd_d0 = pinmap_findval(pinmap, x);
+		uint32_t sd_d1 = pinmap_findval(pinmap, x + 4);
+		uint32_t sd_d2 = pinmap_findval(pinmap, x + 8);
+		uint32_t sd_d3 = pinmap_findval(pinmap, x + 12);
+		printf("pinmap: SD pins = ");
+		PRINTPIN(sd_clk, ", ")
+		PRINTPIN(sd_cmd, ", ")
+		PRINTPIN(sd_d0, ", ")
+		PRINTPIN(sd_d1, ", ")
+		PRINTPIN(sd_d2, ", ")
+		PRINTPIN(sd_d3, "\n")
+		if (sd_clk == 0x2074 && sd_cmd == 0x2074)
+			printf("guess: no SD card slot\n");
+		else if (sd_clk == 0x2001 && sd_cmd == 0x3084)
+			printf("guess: with SD card slot\n");
+	}
+#undef PRINTPIN
 }
 
 static void scan_fw(uint8_t *buf, unsigned size, int flags) {
@@ -714,6 +762,7 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 				case 3: s = "SC6530"; break;
 				}
 				printf("0x%x: devices_tab (chip = %s)\n", i, s);
+				clues.chip = k;
 			}
 		} while (0);
 
@@ -734,6 +783,9 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 			}
 		} while (0);
 	}
+
+	if (clues.pinmap_offs)
+		pinmap_info(clues.chip, (uint32_t*)(buf + clues.pinmap_offs));
 
 	if (ps_size < size) {
 		check_keymap2(buf, ps_size, clues.ps_addr, flags);
