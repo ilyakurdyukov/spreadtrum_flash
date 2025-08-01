@@ -6,6 +6,7 @@
 #if WITH_LZMADEC
 static int lzma_sprd = 0;
 #define LZMA_SPRD_HACK lzma_sprd
+#if WITH_LZMADEC == 1
 #include "lzma/LzmaDecode.c"
 
 static size_t decode_lzma_impl(const uint8_t *src, size_t *src_size, uint8_t *dst, size_t dst_size) {
@@ -23,10 +24,25 @@ static size_t decode_lzma_impl(const uint8_t *src, size_t *src_size, uint8_t *ds
 				dst, dst_size, &outSizeProcessed);
 		free(decoder.Probs);
 		inSizeProcessed += 5 + 8;
+		if (ret != LZMA_RESULT_OK)
+			printf("!!! LzmaDecode: data error (%d)\n", ret);
 	} while (0);
 	*src_size = inSizeProcessed;
 	return outSizeProcessed;
 }
+#elif WITH_LZMADEC == 2
+#define decode_lzma decode_lzma_impl1
+#include "lzmadec.h"
+#undef decode_lzma
+
+static uint32_t decode_lzma_impl(const uint8_t *src, size_t *src_size, uint8_t *dst, size_t dst_size) {
+	uint32_t code;
+	size_t dst_size2 = dst_size;
+	code = decode_lzma_impl1(src, src_size, dst, &dst_size2);
+	if (code) printf("!!! LzmaDecode: data error\n");
+	return dst_size2;
+}
+#endif
 
 static size_t decode_lzma(const uint8_t *src, size_t *src_size, uint8_t *dst, size_t dst_size) {
 	lzma_sprd = 0;
