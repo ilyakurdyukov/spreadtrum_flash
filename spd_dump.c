@@ -624,17 +624,21 @@ static void erase_flash(spdio_t *io, uint32_t addr, uint32_t size) {
 
 static unsigned dump_flash(spdio_t *io,
 		uint32_t addr, uint32_t start, uint32_t len,
-		const char *fn, unsigned step) {
+		const char *fn, unsigned step, int mode) {
 	uint32_t n, offset, nread;
 	int ret;
 	FILE *fo = fopen(fn, "wb");
 	if (!fo) ERR_EXIT("fopen(dump) failed\n");
 
+	if (mode == 1) {
+		len = 0x200;
+		if (step < 64) step = 64;
+	}
+
 	for (offset = start; offset < start + len; ) {
 		uint32_t data[3];
 		n = start + len - offset;
 		if (n > step) n = step;
-
 		WRITE32_BE(data, addr);
 		WRITE32_BE(data + 1, n);
 		WRITE32_BE(data + 2, offset);
@@ -651,6 +655,16 @@ static unsigned dump_flash(spdio_t *io,
 			ERR_EXIT("unexpected length\n");
 		if (fwrite(io->raw_buf + 4, 1, nread, fo) != nread) 
 			ERR_EXIT("fwrite(dump) failed\n");
+		if (!offset && mode == 1) {
+			uint8_t *p = io->raw_buf + 4;
+			if (nread < 0x34) ERR_EXIT("can't read DHTB header\n");
+			// "DHTB" -> "BTHD", Boot Header
+			if (READ32_LE(p) != 0x42544844 || READ32_LE(p + 4) != 1)
+				ERR_EXIT("unexpected DHTB header\n");
+			len = READ32_LE(p + 0x30);
+			if (len >> 31) ERR_EXIT("unexpected DHTB size (0x%x)\n", len);
+			len += 0x200;
+		}
 		offset += nread;
 		if (n != nread) break;
 	}
@@ -1192,16 +1206,18 @@ int main(int argc, char **argv) {
 
 		} else if (!strcmp(argv[1], "read_flash")) {
 			const char *fn; uint64_t addr, offset, size;
+			int mode = 0;
 			if (argc <= 5) ERR_EXIT("bad command\n");
 
 			addr = str_to_size(argv[2]);
 			offset = str_to_size(argv[3]);
-			size = str_to_size(argv[4]);
+			if (!offset && !strcmp(argv[4], "auto")) mode = 1, size = 0;
+			else size = str_to_size(argv[4]);
 			fn = argv[5];
 			if ((addr | size | offset | (addr + offset + size)) >> 32)
 				ERR_EXIT("32-bit limit reached\n");
 			dump_flash(io, addr, offset, size, fn,
-					blk_size ? blk_size : 1024);
+					blk_size ? blk_size : 1024, mode);
 			argc -= 5; argv += 5;
 
 		} else if (!strcmp(argv[1], "write_word")) {

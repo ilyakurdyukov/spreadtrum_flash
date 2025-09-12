@@ -112,6 +112,24 @@ There are some special names not listed in the partition list:
 `splloader`, `spl_loader_bak` - bootloader similar to FDL1.  
 `uboot` - just an alias for the `uboot` partition, but if it's missing (because named `uboot_a`), then `splloader` is read instead.  
 
+### Instructions (4G feature phones)
+
+Unisoc has new chips for 4G feature phones, the most common one is called UMS9117 (aka T117), but there are also T107 and T127 versions.
+
+The firmware can be read if you have compatible FDL1/FDL2 binaries. If you don't have the original firmware, you can try FDLs from other phones with the same chip, but FDL2 may hang or give an error if it is not compatible enough.
+
+* If the size for the `read_flash` command is specified as auto, then it's read from the "DHTB" header.
+
+```
+./spd_dump \
+	keep_charge 1  fdl fdl1.bin 0x6200 \
+	blk_size 0x1000  fdl fdl2.bin 0x80100000 \
+	read_flash 0x80000001 0 auto boot0.bin \
+	read_flash 0x80000002 0 auto boot1.bin \
+	read_flash 0x80000003 0 auto kernel.bin \
+	read_flash 0x80000004 0 auto user.bin
+```
+
 ### Using the tool on Linux without sudo
 
 If you create `/etc/udev/rules.d/80-spd-mtk.rules` with these lines:

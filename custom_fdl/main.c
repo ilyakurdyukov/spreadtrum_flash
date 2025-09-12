@@ -42,6 +42,7 @@ static struct {
 
 #define FW_ADDR (_chip != 1 ? 0x30000000 : 0x10000000)
 
+#if WITH_SFC
 static uint32_t flash_id = ~0;
 
 static void sfc_unlock(void) {
@@ -68,6 +69,7 @@ match:
 	} while (0);
 	sfc_spiread(cs);
 }
+#endif
 
 static int data_start(uint8_t *pkt) {
 	unsigned len = READ16_BE(pkt + 2);
@@ -83,6 +85,7 @@ static int data_start(uint8_t *pkt) {
 	return BSL_REP_ACK;
 }
 
+#if WITH_SFC
 static int write_and_check(int cs, int addr, void *buf, unsigned size, uint32_t fw_addr) {
 	uint8_t *d, *s; int i;
 	sfc_write(cs, addr, buf, size);
@@ -96,6 +99,7 @@ static int write_and_check(int cs, int addr, void *buf, unsigned size, uint32_t 
 	for (; i; i++) if (d[i] != s[i]) return 1;
 	return 0;
 }
+#endif
 
 static int data_midst(uint8_t *pkt) {
 	unsigned len = READ16_BE(pkt + 2);
