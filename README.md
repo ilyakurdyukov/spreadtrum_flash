@@ -118,6 +118,8 @@ Unisoc has new chips for 4G feature phones, the most common one is called UMS911
 
 The firmware can be read if you have compatible FDL1/FDL2 binaries. If you don't have the original firmware, you can try FDLs from other phones with the same chip, but FDL2 may hang or give an error if it is not compatible enough.
 
+* Connecting the phone in bootloader mode is only possible when power is supplied with the boot key held down, which must be found. The same as for old chips for feature phones.
+
 * If the size for the `read_flash` command is specified as auto, then it's read from the "DHTB" header.
 
 ```
