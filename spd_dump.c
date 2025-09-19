@@ -1005,6 +1005,30 @@ static int64_t find_partition_size(spdio_t *io, const char *name) {
 	return offset;
 }
 
+static uint32_t t117_exec_dist = 0;
+
+static void t117_exec_workaround(spdio_t *io, uint32_t addr) {
+	uint8_t *buf = io->temp_buf, *p;
+	unsigned dist = t117_exec_dist;
+	unsigned i, n = 252, skip = 3;
+
+	addr += 0x200;
+#define X(v) ((unsigned)((v) & 0xff) - 0x7d < 2)
+	if (addr >= 0x40000 || X(addr) || X(addr >> 8))
+		ERR_EXIT("unsupported exec address\n");
+	if (dist >> 16) ERR_EXIT("unsupported dist\n");
+	if (X(dist)) skip--;
+	if (X(dist >> 8)) skip--;
+#undef X
+
+	p = buf;
+	for (i = 0; i < skip; i++) *p++ = 0;
+	for (i = 0; i < n; i++, p += 4) WRITE32_LE(p, addr);
+	if (skip & 1) *p++ = 0; // align
+	encode_msg(io, dist, buf, p - buf);
+	send_msg(io); // no ack
+}
+
 static uint64_t str_to_size(const char *str) {
 	char *end; int shl = 0; uint64_t n;
 	if ((unsigned)(*str - '0') >= 10)
@@ -1145,8 +1169,12 @@ int main(int argc, char **argv) {
 				send_file(io, fn, addr, end_data,
 					blk_size ? blk_size : 528, 0, 0);
 
-				encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
-				send_and_check(io);
+				if (t117_exec_dist) {
+					t117_exec_workaround(io, addr);
+				} else {
+					encode_msg(io, BSL_CMD_EXEC_DATA, NULL, 0);
+					send_and_check(io);
+				}
 
 				/* FDL1 (chk = sum) */
 				io->flags &= ~FLAGS_CRC16;
@@ -1379,6 +1407,11 @@ int main(int argc, char **argv) {
 			encode_msg(io, BSL_CMD_POWER_OFF, NULL, 0);
 			send_and_check(io);
 			argc -= 1; argv += 1;
+
+		} else if (!strcmp(argv[1], "t117_exec_dist")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			t117_exec_dist = strtol(argv[2], NULL, 0);
+			argc -= 2; argv += 2;
 
 		} else if (!strcmp(argv[1], "verbose")) {
 			if (argc <= 2) ERR_EXIT("bad command\n");
