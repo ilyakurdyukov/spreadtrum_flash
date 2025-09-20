@@ -335,6 +335,10 @@ void dl_main(void) {
 			break;
 #endif
 
+		case BSL_CMD_OFF_CHG:
+			ret = BSL_REP_ACK;
+			break;
+
 		default:
 			ret = BSL_REP_UNKNOWN_CMD;
 		}

@@ -1,10 +1,10 @@
-/* ld-script : SC6531E FDL1 */
+/* ld-script : UMS9117 FDL1 */
 
 OUTPUT_FORMAT("elf32-littlearm")
 OUTPUT_ARCH(arm)
 
-BSS_START = 0x40000000; BSS_SIZE = 0x4000;
-IMAGE_START = 0x40004000; IMAGE_SIZE = 0x5000;
+BSS_START = 0x0; BSS_SIZE = 0x6000;
+IMAGE_START = 0x6200; IMAGE_SIZE = 0x5000;
 STACK_SIZE = 0x2000;
 
 ENTRY(_start)
@@ -28,7 +28,7 @@ SECTIONS {
 	}
 	ASSERT(__stack_bottom - IMAGE_START <= IMAGE_SIZE, "image overflow")
 
-	__image_size = __image_end - __image_start;
+	__image_size = __image_end - __image_start - 0x200;
 	__bss_size = __bss_end - __image_end;
 
 	/DISCARD/ : { *(.ARM.exidx .ARM.exidx.*) }
