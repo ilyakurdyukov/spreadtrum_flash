@@ -22,10 +22,11 @@ CFLAGS = -Os
 endif
 
 CFLAGS += -Wall -funsigned-char
-CFLAGS += -fno-PIE -ffreestanding -march=armv7-a -mthumb $(EXTRA_CFLAGS) -fno-strict-aliasing
+CFLAGS += -fno-PIE -ffreestanding -mcpu=cortex-a7 -mthumb $(EXTRA_CFLAGS) -fno-strict-aliasing
 CFLAGS += -fomit-frame-pointer
 CFLAGS += -ffunction-sections -fdata-sections
 LFLAGS = -static -nostartfiles -nodefaultlibs -nostdlib -Wl,-T,$(LDSCRIPT) -Wl,--gc-sections -Wl,-z,notext
+LFLAGS += -mcpu=cortex-a7 # required for GCC + LTO
 CFLAGS += -DCHIP=$(CHIP)
 ifeq ($(FDL), 2)
 CFLAGS += -DFDL2=1
@@ -34,7 +35,10 @@ endif
 
 # Clang's LTO doesn't work with the GCC toolchain
 ifeq ($(findstring -gcc-toolchain,$(notdir $(CC))),)
+# FIXME: FDL compiled with GCC + LTO hangs somewhere
+ifeq ($(COMPILER), clang)
 CFLAGS += -flto
+endif
 endif
 
 ifdef SYSROOT
