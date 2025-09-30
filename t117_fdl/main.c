@@ -16,6 +16,9 @@ static int data_start(uint8_t *pkt) {
 	if (len != 8)
 		return BSL_REP_INVALID_CMD;
 
+	dl_status.start = addr;
+	dl_status.size = size;
+	dl_status.recv = 0;
 #if !FDL2 && SDRAM_INIT == 2
 	// init RAM on demand
 	if (addr - 0x80000000 < 64 << 20) {
@@ -27,9 +30,6 @@ static int data_start(uint8_t *pkt) {
 		done = 1;
 	}
 #endif
-	dl_status.start = addr;
-	dl_status.size = size;
-	dl_status.recv = 0;
 	return BSL_REP_ACK;
 }
 

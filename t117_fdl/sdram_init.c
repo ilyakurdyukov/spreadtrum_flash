@@ -679,6 +679,8 @@ static int ddr_scan_online(int freq) {
 	return 0;
 }
 
+// hangs when inlined with GCC + LTO
+__attribute__((noinline))
 int sdram_init(void) {
 	unsigned ddr_clk = ddr_clk_array[2];
 	uint32_t tmp;

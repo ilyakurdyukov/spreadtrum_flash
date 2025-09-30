@@ -35,10 +35,7 @@ endif
 
 # Clang's LTO doesn't work with the GCC toolchain
 ifeq ($(findstring -gcc-toolchain,$(notdir $(CC))),)
-# FIXME: FDL compiled with GCC + LTO hangs somewhere
-ifeq ($(COMPILER), clang)
 CFLAGS += -flto
-endif
 endif
 
 ifdef SYSROOT
