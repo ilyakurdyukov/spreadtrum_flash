@@ -8,7 +8,7 @@ void invalidate_dcache_range(void *start, void *end);
 
 static char usb_size64; // max bulk size
 unsigned usb_recv_idx, usb_recv_len;
-static uint8_t usb_recv_buf[USB_BUFSIZE] ALIGN(32);
+static uint8_t usb_recv_buf[USB_BUFSIZE] ALIGN(64);
 
 typedef struct {
 	void *ptr;
@@ -20,23 +20,10 @@ static usb_trans_t usb_send_trans ALIGN(16);
 static usb_trans_t usb_recv_trans ALIGN(16);
 
 static void usr_start_recv(void) {
-	int ep = 6;
-	usb_trans_t *tr = &usb_recv_trans;
-
-	tr->ptr = usb_recv_buf;
-	tr->len1 = 0x20;
-	tr->len2 = USB_BUFSIZE;
-	tr->flags = 5;
-
-	// orig code don't do this
-	clean_dcache_range(tr, (char*)tr + 12);
-
-	{
-		uint32_t b = 0x20201be0 + (15 + ep) * 32;
-		MEM4(b + 8) |= 0x14;
-		MEM4(b + 0x14) = (uint32_t)tr;
-		MEM4(b + 4) |= 1;
-	}
+	uint32_t b = 0x20201be0 + (15 + 6) * 32;
+	MEM4(b + 8) |= 0x14;
+	MEM4(b + 0x14) = (uint32_t)&usb_recv_trans;
+	MEM4(b + 4) |= 1;
 }
 
 static const uint8_t dev_desc[] ALIGN(4) = {
@@ -201,6 +188,17 @@ static void usb_send(const void *src, unsigned len) {
 }
 
 static void usb_init(void) {
+	{
+		usb_trans_t *tr = &usb_recv_trans;
+
+		tr->ptr = usb_recv_buf;
+		tr->len1 = 0x20;
+		tr->len2 = USB_BUFSIZE;
+		tr->flags = 5;
+
+		// orig code don't do this
+		clean_dcache_range(tr, (char*)tr + 12);
+	}
 	usb_size64 = 0;
 	usb_recv_idx = usb_recv_len = 0;
 #if !FDL2

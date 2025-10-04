@@ -1095,7 +1095,7 @@ int main(int argc, char **argv) {
 	int wait = 300 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
 	int verbose = 0, fdl_loaded = 0;
-	uint32_t fw_addr = ~0u;
+	uint32_t fw_addr = ~0u, ram_addr = ~0u;
 	int keep_charge = 0, end_data = 1, blk_size = 0;
 
 #if USE_LIBUSB
@@ -1153,7 +1153,7 @@ int main(int argc, char **argv) {
 			if (argc <= 3) ERR_EXIT("bad command\n");
 
 			fn = argv[2];
-			addr = str_to_addr(argv[3], "ram", fw_addr | 0x04000000);
+			addr = str_to_addr(argv[3], "ram", ram_addr);
 
 			if (!fdl_loaded) {
 				// Required for smartphones.
@@ -1209,10 +1209,16 @@ int main(int argc, char **argv) {
 					int len = READ16_BE(io->raw_buf + 2);
 					DBG_LOG("BSL_REP_VER: ");
 					print_string(stderr, str, len);
-					if (len && !str[len - 1]) {
-						if (strstr(str, "CHIP ID = 0x6530") ||
-								strstr(str, "CHIP ID = 0x6531")) fw_addr = 0x30000000;
-						if (strstr(str, "CHIP ID = 0x6562")) fw_addr = 0x10000000;
+					if (len && !str[len - 1] && (str = strstr(str, "CHIP ID = 0x"))) {
+						uint32_t id = strtoul(str + 12, NULL, 16);
+						// SC6530, SC6530C, SC6531
+						if ((id ^ 0x65300000) >> 17 == 0)
+							ram_addr = (fw_addr = 0x30000000) | 0x04000000;
+						// SC6531E
+						else if ((id ^ 0x65620000) >> 16 == 0)
+							ram_addr = (fw_addr = 0x10000000) | 0x04000000;
+						// UMS9117
+						else if ((id ^ 0x98180000) >> 16 == 0) ram_addr = 0x80000000;
 					}
 				}
 

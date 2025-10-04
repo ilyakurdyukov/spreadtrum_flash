@@ -29,7 +29,7 @@ CODE32_FN _start
 	.ascii "DHTB"
 	.long 1
 	.org _start + 0x30, 0
-	.long __image_size
+	.long __image_size - 0x200
 	.org _start + 0x200, 0
 
 	adr	r2, _start
@@ -52,7 +52,7 @@ CODE32_FN _start
 	vmsr	FPEXC, r0
 	isb	sy
 	mov	r2, #0xd3
-	msr	cpsr_c, r2
+	msr	CPSR_c, r2
 	mov	r0, #0x12000
 	mov	sp, r0
 	blx	init_chip

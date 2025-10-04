@@ -28,7 +28,7 @@ SECTIONS {
 	}
 	ASSERT(__stack_bottom - IMAGE_START <= IMAGE_SIZE, "image overflow")
 
-	__image_size = __image_end - __image_start - 0x200;
+	__image_size = __image_end - __image_start;
 	__bss_size = __bss_end - __image_end;
 
 	/DISCARD/ : { *(.ARM.exidx .ARM.exidx.*) }

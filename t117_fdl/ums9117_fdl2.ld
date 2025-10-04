@@ -33,7 +33,7 @@ SECTIONS {
 		__bss_end = .;
 	}
 
-	__image_size = __image_end - __image_start - 0x200;
+	__image_size = __image_end - __image_start;
 	__bss_size = __bss_end - __image_end;
 
 	__stack_top = EXTRA_START;
