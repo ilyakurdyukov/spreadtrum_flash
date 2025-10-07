@@ -405,16 +405,13 @@ static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags)
 			name = keypad_getname(a);
 			if (name) printf(" (%s)", name);
 		}
-#if 0 // no sdboot yet
-		printf(", sdboot keys = 0x%02x 0x%02x 0x%02x (",
-				p[1], p[nrow], p[nrow + 1]);
-		for (i = 1; i < 4; i++) {
+		printf(", bl_update keys = 0x%02x 0x%02x (", p[1], p[nrow]);
+		for (i = 1; i < 3; i++) {
 			a = p[(i & 1) + (i >> 1) * nrow];
 			name = "---";
 			if (a != 0xffff) name = keypad_getname(a);
-			printf("%s%s", name ? name : "???", i < 3 ? ", " : ")");
+			printf("%s%s", name ? name : "???", i < 2 ? ", " : ")");
 		}
-#endif
 	}
 	printf("\n");
 
