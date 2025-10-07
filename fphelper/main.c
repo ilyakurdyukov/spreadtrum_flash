@@ -1488,12 +1488,12 @@ static void lcd_init_dec(uint8_t *buf, unsigned size, unsigned pos, unsigned mod
 			if (flags >> b & 1) break;
 			reg[b] = a & 0xff;
 			flags |= 1 << b;
-		// MOV Rd, Rm
-		} else if ((a & 0xffc0) == 0) {
+		// MOVS Rd, Rm
+		} else if (!(a & 0xffc0)) {
 			b = a & 7;
 			c = a >> 3 & 7;
 			if (!(flags >> c & 1)) break;
-			reg[b] = reg[a >> 3 & 7];
+			reg[b] = reg[c];
 			flags |= 1 << b;
 		// BLX
 		} else if ((a & 0xf800) == 0xf000) {
