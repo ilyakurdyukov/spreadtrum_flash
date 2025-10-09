@@ -122,7 +122,17 @@ static struct {
 	uint32_t ps_addr;
 	uint32_t pinmap_offs;
 	uint32_t keymap_addr;
+	uint32_t tfboot_offs, tfboot_size;
 } clues = { 0 };
+
+static void save_bin(const char *name, const void *buf, unsigned size) {
+	FILE *fo = fopen(name, "wb");
+	if (!fo) fprintf(stderr, "fopen(output) failed\n");
+	else {
+		fwrite(buf, 1, size, fo);
+		fclose(fo);
+	}
+}
 
 static int check_lcd_entry(uint32_t *p) {
 	if (p[6] != 9) return 1;
@@ -196,6 +206,27 @@ static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 	}
 }
 
+static void find_tfboot(uint8_t *buf, uint32_t size, unsigned offset) {
+	unsigned i, j, size2 = size - offset;
+	if (clues.tfboot_offs) return;
+	if (size2 < 0x1000) return;
+	size2 = offset + 0x400;
+	for (i = offset; i < size2; i += 4) {
+		uint32_t *p = (uint32_t*)(buf + i);
+		for (j = 0; j < 15; j++)
+			if (p[j] != 0xe3a00000 + (j << 12)) break;
+		if (j < 15) continue;
+		if (p[0xb0 / 4] != 0x4c4d5053) continue;
+		buf += i; size -= i;
+		clues.tfboot_offs = i;
+		clues.tfboot_size = size;
+		// TODO: find the original size
+		printf("0x%x: internal tfboot (size <= 0x%x)\n", i, size);
+		save_bin("tfboot.bin", buf, size);
+		return;
+	}
+}
+
 static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int flags) {
 	uint32_t *p = (uint32_t*)(buf + o1), *p2;
 	uint32_t o2, o3, i, n, size2;
@@ -207,6 +238,7 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 	o2 = *p++; o3 = *p++;
 	if (o3 > (size - o1)) return 0;
 	o2 += o1; o3 += o1;
+	if (o2 - clues.tfboot_offs < clues.tfboot_size) return 0;
 	printf("0x%x: init_table, start = 0x%x, end = 0x%x\n", o1, o2, o3);
 	nop_addr = o1 - 0x1e;
 
@@ -273,6 +305,7 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 		for (p2 = p, i = 0; i < n; i++, p2 += 4) {
 			uint32_t a = p2[0];
 			if (zero_addr && p2[3] == zero_addr) continue;
+			if (nop_addr && p2[3] == nop_addr) continue;
 			if (a < fwaddr) continue;
 			a -= fwaddr;
 			if (ps_size > a) ps_size = a;
@@ -331,6 +364,7 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 			if (fo) fclose(fo);
 			init_count++;
 		}
+		find_tfboot(buf, ps_size, o3);
 		return ps_size;
 	}
 	return 0;
@@ -377,15 +411,6 @@ static const char* keypad_getname(unsigned a) {
 	for (i = 0; keypad_ids[i] != 0xffff; i++)
 		if (keypad_ids[i] == a) return keypad_names[i];
 	return NULL;
-}
-
-static void save_bin(const char *name, const void *buf, unsigned size) {
-	FILE *fo = fopen(name, "wb");
-	if (!fo) fprintf(stderr, "fopen(output) failed\n");
-	else {
-		fwrite(buf, 1, size, fo);
-		fclose(fo);
-	}
 }
 
 static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags) {

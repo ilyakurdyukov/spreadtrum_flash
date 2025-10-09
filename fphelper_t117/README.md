@@ -12,7 +12,7 @@ Use this command to run a firmware scan and extract segments:
 
 `./fphelper_t117 flash.bin unpack`  
 
-* `unpack` command can create: `init[%u]_%x.bin pinmap.bin keymap.bin`
+* `unpack` command can create: `init[%u]_%x.bin pinmap.bin keymap.bin tfboot.bin`
 
 These commands decode compressed streams and require stream offset:
 
