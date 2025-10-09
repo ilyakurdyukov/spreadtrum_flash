@@ -208,6 +208,7 @@ static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 
 static void find_tfboot(uint8_t *buf, uint32_t size, unsigned offset) {
 	unsigned i, j, size2 = size - offset;
+	int found_end = 0;
 	if (clues.tfboot_offs) return;
 	if (size2 < 0x1000) return;
 	size2 = offset + 0x400;
@@ -216,12 +217,24 @@ static void find_tfboot(uint8_t *buf, uint32_t size, unsigned offset) {
 		for (j = 0; j < 15; j++)
 			if (p[j] != 0xe3a00000 + (j << 12)) break;
 		if (j < 15) continue;
-		if (p[0xb0 / 4] != 0x4c4d5053) continue;
+		if (p[0x74 / 4] != 0x8001006c) continue;
+		{
+			uint32_t tmp = p[0xac / 4] - 0x80010000;
+			if (tmp != 0xb0 && tmp != 0xb4) continue;
+			if (p[tmp / 4] != 0x4c4d5053) continue;
+		}
 		buf += i; size -= i;
+		if (size < 0x1000) break;
 		clues.tfboot_offs = i;
 		clues.tfboot_size = size;
-		// TODO: find the original size
-		printf("0x%x: internal tfboot (size <= 0x%x)\n", i, size);
+		// find the original size
+		for (j = (size & ~3) - 0x14; j > 0x100; j -= 4) {
+			p = (uint32_t*)(buf + j);
+			if (p[0] == 0x11 && !p[1] && p[2] == 0x7ff00000 && p[3] == 0x110 && p[4] == 0x43) {
+				size = j + 4; found_end = 1; break;
+			}
+		}
+		printf("0x%x: internal tfboot (size %s= 0x%x)\n", i, found_end ? "" : "<", size);
 		save_bin("tfboot.bin", buf, size);
 		return;
 	}
@@ -302,6 +315,7 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 		if (lz_addr) lz_addr += fwaddr;
 		if (copy_addr) copy_addr += fwaddr;
 		if (zero_addr) zero_addr += fwaddr;
+		if (nop_addr) nop_addr += fwaddr;
 		for (p2 = p, i = 0; i < n; i++, p2 += 4) {
 			uint32_t a = p2[0];
 			if (zero_addr && p2[3] == zero_addr) continue;
@@ -324,6 +338,14 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 
 			for (p2 = p, i = 0; i < n; i++, p2 += 4) {
 				uint32_t offs = p2[0], size2;
+				unsigned j;
+				// For the case where compressed data is copied and then decompressed.
+				if (copy_addr)
+				for (j = 0; j < i; j++)
+					if (offs == p[j * 4 + 1] && p[j * 4 + 3] == copy_addr) {
+						offs = p[j * 4 + 0];
+						break;
+					}
 				if (offs < fwaddr) continue;
 				offs -= fwaddr;
 				if (offs >= size) continue;
@@ -354,6 +376,8 @@ static uint32_t print_init_table(uint8_t *buf, unsigned size, uint32_t o1, int f
 					if (mem) {
 						size_t src_size = size2;
 						size2 = lzdec_fn(buf + offs, &src_size, mem, p2[2]);
+						if (size2 != p2[2])
+							printf("!!! lzdec failed (0x%x / 0x%x, dst = 0x%x)\n", size2, p2[2], p2[1]);
 						scan_init_seg(mem, size2, p2[1]);
 						if (fo) next = fwrite(mem, 1, size2, fo);
 						free(mem);
