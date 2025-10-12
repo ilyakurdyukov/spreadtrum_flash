@@ -636,23 +636,17 @@ static void erase_flash(spdio_t *io, uint32_t addr, uint32_t size) {
 	send_and_check(io);
 }
 
-static unsigned dump_flash(spdio_t *io,
+static unsigned read_flash(spdio_t *io,
 		uint32_t addr, uint32_t start, uint32_t len,
-		const char *fn, unsigned step, int mode) {
+		uint8_t *mem, FILE *fo, unsigned step) {
 	uint32_t n, offset, nread;
 	int ret;
-	FILE *fo = fopen(fn, "wb");
-	if (!fo) ERR_EXIT("fopen(dump) failed\n");
-
-	if (mode == 1) {
-		len = 0x200;
-		if (step < 64) step = 64;
-	}
 
 	for (offset = start; offset < start + len; ) {
 		uint32_t data[3];
 		n = start + len - offset;
 		if (n > step) n = step;
+
 		WRITE32_BE(data, addr);
 		WRITE32_BE(data + 1, n);
 		WRITE32_BE(data + 2, offset);
@@ -667,24 +661,66 @@ static unsigned dump_flash(spdio_t *io,
 		nread = READ16_BE(io->raw_buf + 2);
 		if (n < nread)
 			ERR_EXIT("unexpected length\n");
-		if (fwrite(io->raw_buf + 4, 1, nread, fo) != nread) 
+		if (mem) {
+			memcpy(mem, io->raw_buf + 4, nread);
+			mem += nread;
+		}
+		if (fo && fwrite(io->raw_buf + 4, 1, nread, fo) != nread) {
 			ERR_EXIT("fwrite(dump) failed\n");
-		if (!offset && mode == 1) {
-			uint8_t *p = io->raw_buf + 4;
-			if (nread < 0x34) ERR_EXIT("can't read DHTB header\n");
-			// "DHTB" -> "BTHD", Boot Header
-			if (READ32_LE(p) != 0x42544844 || READ32_LE(p + 4) != 1)
-				ERR_EXIT("unexpected DHTB header\n");
-			len = READ32_LE(p + 0x30);
-			if (len >> 31) ERR_EXIT("unexpected DHTB size (0x%x)\n", len);
-			len += 0x200;
 		}
 		offset += nread;
 		if (n != nread) break;
 	}
-	DBG_LOG("dump_flash: 0x%08x+0x%x, target: 0x%x, read: 0x%x\n", addr, start, len, offset - start);
+	return offset - start;
+}
+
+static unsigned dump_flash(spdio_t *io,
+		uint32_t addr, uint32_t start, uint32_t len,
+		const char *fn, unsigned step, int mode) {
+	uint32_t nread = 0;
+	FILE *fo = fopen(fn, "wb");
+	if (!fo) ERR_EXIT("fopen(dump) failed\n");
+
+	if (mode == 1) {
+		uint8_t buf[0x34];
+		len = sizeof(buf);
+		nread = read_flash(io, addr, start, len, buf, fo, step);
+		if (nread != len)
+			ERR_EXIT("can't read DHTB header\n");
+		// "DHTB" -> "BTHD", Boot Header
+		if (READ32_LE(buf) != 0x42544844 || READ32_LE(buf + 4) != 1)
+			ERR_EXIT("unexpected DHTB header\n");
+		len = READ32_LE(buf + 0x30);
+		if (len >> 31) ERR_EXIT("unexpected DHTB size (0x%x)\n", len);
+		len += 0x200;
+	}
+	nread += read_flash(io, addr, start + nread, len - nread, NULL, fo, step);
+	if (mode == 1 && len == nread) do {	// read DHTB signature
+		uint8_t buf[0x60];
+		uint32_t nread2, nread1;
+		nread2 = read_flash(io, addr, start + nread, 0x60, buf, NULL, step);
+		// can be unsigned
+		if (nread2 != 0x60) break;
+		if (!READ32_LE(buf + 0x10)) break; // all zeros
+		if (!~READ32_LE(buf + 0x10)) break; // all ones
+
+		if (fwrite(buf, 1, nread2, fo) != nread2)
+			ERR_EXIT("fwrite(dump) failed\n");
+
+		nread1 = nread; len = nread += nread2;
+		if (READ32_LE(buf + 0x10) != (int)nread1 - 0x200 || // data size
+				READ32_LE(buf + 0x18) != 0x200 || // data offset
+				READ32_LE(buf + 0x20) != 0x254 || // sign data size
+				READ32_LE(buf + 0x28) != (int)nread1 + 0x60) { // sign data offset
+			DBG_LOG("unexpected DHTB signature\n");
+			break;
+		}
+		len += nread2 = READ32_LE(buf + 0x20);
+		nread += read_flash(io, addr, start + nread, nread2, buf, fo, step);
+	} while (0);
+	DBG_LOG("dump_flash: 0x%08x+0x%x, target: 0x%x, read: 0x%x\n", addr, start, len, nread);
 	fclose(fo);
-	return offset;
+	return nread;
 }
 
 static unsigned dump_mem(spdio_t *io,
