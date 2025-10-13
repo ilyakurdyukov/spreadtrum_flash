@@ -13,7 +13,7 @@ void dl_packet_init(void) {
 
 static uint32_t dl_escapedata(uint8_t *dst_start, uint8_t *src, unsigned size) {
 	uint16_t crc; uint8_t *dst;
-	int i;
+	unsigned i;
 
 #if ACT_AS_ROMCODE
 	crc = dl_crc16(src, size);

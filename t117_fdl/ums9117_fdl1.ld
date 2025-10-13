@@ -3,8 +3,8 @@
 OUTPUT_FORMAT("elf32-littlearm")
 OUTPUT_ARCH(arm)
 
-BSS_START = 0x0; BSS_SIZE = 0x6000;
-IMAGE_START = 0x6200; IMAGE_SIZE = 0x5000;
+BSS_START = 0x40; BSS_SIZE = 0x5fc0;
+IMAGE_START = 0x6200; IMAGE_SIZE = 0x8000;
 STACK_SIZE = 0x2000;
 
 ENTRY(_start)
@@ -32,4 +32,5 @@ SECTIONS {
 	__bss_size = __bss_end - __image_end;
 
 	/DISCARD/ : { *(.ARM.exidx .ARM.exidx.*) }
+	/DISCARD/ : { *(.gnu.hash .dynamic .interp) }
 }

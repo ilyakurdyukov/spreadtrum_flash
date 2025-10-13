@@ -218,21 +218,25 @@ static int usb_channel_open(dl_channel_t *channel,
 		channel->priv = (void*)1;
 	} else {
 		// set baudrate
+		(void)baudrate;
 	}
 	return 0;
 }
 
 static int usb_channel_getchar(dl_channel_t *channel, int wait) {
+	(void)channel; (void)wait;
 	return usb_read1();
 }
 
 static int usb_channel_write(dl_channel_t *channel,
 		const void *src, unsigned len) {
+	(void)channel;
 	usb_send(src, len);
 	return len;
 }
 
 static int usb_channel_close(dl_channel_t *channel) {
+	(void)channel;
 	return 0;
 }
 

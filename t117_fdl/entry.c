@@ -196,7 +196,7 @@ uint32_t init_chip(void) {
 #endif
 }
 
-void entry_main() {
+void entry_main(void) {
 	dl_main();
 }
 

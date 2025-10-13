@@ -298,6 +298,7 @@ static int usb_channel_open(dl_channel_t *channel,
 #endif
 	} else {
 		// set baudrate
+		(void)baudrate;
 	}
 	return 0;
 }
@@ -305,6 +306,7 @@ static int usb_channel_open(dl_channel_t *channel,
 static int usb_channel_getchar(dl_channel_t *channel, int wait) {
 	usb_buf_t *p = &usb_buf;
 	unsigned rpos; int ret;
+	(void)channel;
 
 	if (wait) {
 		for (;;) {
@@ -328,6 +330,7 @@ static int usb_channel_getchar(dl_channel_t *channel, int wait) {
 static int usb_channel_write(dl_channel_t *channel,
 		const void *src, unsigned len) {
 	const uint8_t *s = (const uint8_t*)src;
+	(void)channel;
 	for (; len > USB_MAXREAD; len -= USB_MAXREAD) {
 		usb_send(4, s, USB_MAXREAD);
 		s += USB_MAXREAD;
@@ -344,6 +347,7 @@ static int usb_channel_write(dl_channel_t *channel,
 }
 
 static int usb_channel_close(dl_channel_t *channel) {
+	(void)channel;
 	return 0;
 }
 

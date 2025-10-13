@@ -186,7 +186,7 @@ static int data_exec(void) {
 	typedef void (*entry_t)(void);
 	uintptr_t start = dl_status.start;
 
-	if (start == -1)
+	if (start == ~0u)
 		return BSL_REP_INVALID_CMD;
 
 	((entry_t)start)();
@@ -216,7 +216,7 @@ static int read_flash(uint8_t *pkt) {
 		return BSL_REP_INVALID_CMD;
 
 	if (len == 12) offs = READ32_BE(pkt + 12);
-	if (offs != -1) {
+	if (offs != ~0u) {
 		if (addr == 0x80000003)
 			addr = FW_ADDR + offs;
 	}
@@ -283,7 +283,7 @@ void dl_main(void) {
 #endif
 
 	dl_packet_init();
-	dl_status.start = -1;
+	dl_status.start = ~0;
 
 	for (;;) {
 		int ch = dl_channel->getchar(dl_channel, 1);

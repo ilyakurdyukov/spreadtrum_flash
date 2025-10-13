@@ -20,7 +20,7 @@ else
 CFLAGS = -Os
 endif
 
-CFLAGS += -Wall -funsigned-char
+CFLAGS += -Wall -Wextra -funsigned-char
 CFLAGS += -fno-PIE -ffreestanding -march=armv5te -mthumb $(EXTRA_CFLAGS) -fno-strict-aliasing
 CFLAGS += -fomit-frame-pointer
 CFLAGS += -ffunction-sections -fdata-sections

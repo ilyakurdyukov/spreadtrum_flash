@@ -25,7 +25,7 @@ static const unsigned ddr_clk_array[] = { 256, 384, 533 };
 #define DRAM_LPDDR2 0x101
 
 typedef struct {
-	int freq;
+	unsigned freq;
 	uint32_t data[14];
 } local_timing_t;
 
@@ -49,7 +49,7 @@ static const local_timing_t dmc_local_timing_lpddr2[] = {
 		0x10428808, 0x000d00d5 } }
 };
 
-static void sdram_clk_init(int freq) {
+static void sdram_clk_init(unsigned freq) {
 	int a = 9;
 	if (freq == 384) a = 11;
 	if (freq == 533) a = 12;
@@ -142,7 +142,7 @@ static void dmc_zq_cal(int target_drv) {
 	MEM4(0x30000490) = tmp;
 }
 
-static int search_for_freq_point(const local_timing_t *p, int n, int freq) {
+static int search_for_freq_point(const local_timing_t *p, int n, unsigned freq) {
 	int i;
 	for (i = 0; i < n; i++)
 		if (p[i].freq == freq) return i;
@@ -164,7 +164,7 @@ static int lpddr_timing_pre_init(int type, const unsigned *freq_arr) {
 	return -1;
 }
 
-static int dram_ddr_init_pre_setting(int freq) {
+static int dram_ddr_init_pre_setting(unsigned freq) {
 	uint32_t tmp;
 	int a;
 
@@ -294,7 +294,7 @@ static void dmc_mrw(int cs, int mr_addr, int val) {
 	MEM4(0x30000104) = tmp;
 }
 
-static int lpddr_powerup_init(int freq) {
+static int lpddr_powerup_init(unsigned freq) {
 	uint32_t tmp;
 
 	MEM4(0x3000000c) = 0;
@@ -321,8 +321,9 @@ static int lpddr_powerup_init(int freq) {
 	return 0;
 }
 
-static void dmc_init_post_setting(int freq) {
+static void dmc_init_post_setting(unsigned freq) {
 	uint32_t tmp;
+	(void)freq;
 
 	insert_bits_mem(0x30000234, 0, 16, 1024);
 	insert_bits_mem(0x30000274, 0, 16, 1536);
@@ -459,7 +460,7 @@ static void sipi_bist_set_pattern(const uint32_t *src) {
 static int sipi_bist_types_test(int type) {
 	uint32_t tmp, seed = 0;
 	uint32_t chip_size = 64 << 20;
-	int n, len = 0x40000, opmode = 0, burst;
+	unsigned n, len = 0x40000, opmode = 0, burst;
 
 	if (len > chip_size) len = chip_size;
 
@@ -651,7 +652,7 @@ static int dmc_lpddr3_rde_training(int neg) {
 	return 0; // return err?
 }
 
-static int ddr_scan_online(int freq) {
+static int ddr_scan_online(unsigned freq) {
 	if (sipi_bist_simple_test())
 		dmc_print_str("sipi_bist_simple_test first failed\n");
 	if (freq == ddr_clk_array[2]) {
