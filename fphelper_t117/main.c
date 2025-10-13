@@ -160,6 +160,41 @@ static void find_lcd_list(uint8_t *buf, unsigned size, uint32_t offset) {
 	}
 }
 
+static void check_nandconf(uint8_t *buf, unsigned size, uint32_t offset) {
+	unsigned size2 = size - offset;
+	uint32_t *p = (uint32_t*)(buf + offset), *start = p;
+	for (;; p += 0x38 / 4) {
+		uint32_t t0, t1; unsigned i;
+		t0 = p[0];
+		if (!(t0 | p[2])) {
+			for (i = 1; i < 0x38 / 4; i++) {
+				t1 = p[i];
+				if (i == 0x20 / 4) t1 ^= 0xff00;
+				t0 |= t1;
+			}
+			if (t0) break;
+			p += 0x38 / 4;
+			t1 = (uint8_t*)p - (buf + offset);
+			printf("0x%x: nand configs (size = 0x%x)\n", offset, t1);
+		}
+		if (p[0] >> 16 | p[1]) break;
+		t1 = p[5] & 0xffff;
+		// block size is a power of 2
+		if (t1 < 512 || (t1 & (t1 - 1))) break;
+		t1 = p[6] & 0xffff;
+		if (!t1 || (t1 & (t1 - 1))) break;
+		t1 = p[6] >> 16;
+		if (t1 < 32 || (t1 & (t1 - 1))) break;
+		t1 = p[7] & 0xffff;
+		if (!t1 || (t1 & (t1 - 1))) break;
+		t0 = p[12];
+		if (t0 != (2000 | 80 << 16) &&
+				t0 != (2000 | 90 << 16) &&
+				t0 != (20 | 50 << 16)) break;
+		if (p[13]) break;
+	}
+}
+
 static void scan_init_seg(uint8_t *buf, unsigned size, uint32_t offset) {
 	unsigned i, size_req = 0x14 + 8;
 	if (size < size_req) return;
@@ -468,6 +503,36 @@ static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags)
 		save_bin("keymap.bin", buf + addr, size);
 }
 
+
+static uint32_t pinmap_findval(uint32_t *p, uint32_t x) {
+	uint32_t a;
+	do if ((a = *p) == x) return p[1]; while ((p += 2, ~a));
+	return a;
+}
+
+static void pinmap_info(uint32_t *pinmap) {
+#define PRINTPIN(x, s) if (~x) printf("0x%x" s, x); else printf("???" s);
+	{
+		uint32_t x = 0x402a00b8;
+		uint32_t spi0_csn = pinmap_findval(pinmap, x);
+		uint32_t spi0_do = pinmap_findval(pinmap, x + 4);
+		uint32_t spi0_di = pinmap_findval(pinmap, x + 12);
+		uint32_t spi0_clk = pinmap_findval(pinmap, x + 16);
+		uint32_t spi0_cd = pinmap_findval(pinmap, x + 20);
+		printf("pinmap: SPI0 pins = ");
+		PRINTPIN(spi0_csn, ", ")
+		PRINTPIN(spi0_do, ", ")
+		PRINTPIN(spi0_di, ", ")
+		PRINTPIN(spi0_clk, ", ")
+		PRINTPIN(spi0_cd, "\n")
+		// 0x10 and 0 for LCM display
+		if (spi0_clk == 0 && spi0_cd == 0x30) {
+			printf("guess: SPI0 display\n");
+		}
+	}
+#undef PRINTPIN
+}
+
 static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 	unsigned i = 0, size_req = 0x1c;
 	unsigned size2, ps_size = 0;
@@ -528,7 +593,19 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 				if ((a ^ 0x402a0000) >> 12 && (a ^ 0x40608000) >> 12) break;
 			}
 		} while (0);
+
+		do {
+			uint32_t size2 = size - i;
+			if (p[0] != 0xf8b1) break;
+			if (p[1] != 0) break;
+			if (p[2] != 0x400) break;
+			if (p[3] != 1) break;
+			check_nandconf(buf, size, i);
+		} while (0);
 	}
+
+	if (clues.pinmap_offs)
+		pinmap_info((uint32_t*)(buf + clues.pinmap_offs));
 
 	if (ps_size < size)
 		check_keymap2(buf, ps_size, clues.ps_addr, flags);
