@@ -439,6 +439,8 @@ static int check_keymap(const void *buf, unsigned size) {
 	for (i = 0; i < n; i++) {
 		a = s[i];
 		if (a == 0xffff) { empty++; empty2 += (i & 7) >= 6; continue; }
+		// exception: Inoi 284 Flip
+		if (a == 0x68) continue;
 		if (a - 1 >= 0x39) break;
 	}
 	// printf("!!! check_keymap: %d, %d, %d\n", i, empty, empty2);
@@ -533,6 +535,26 @@ static void pinmap_info(uint32_t *pinmap) {
 #undef PRINTPIN
 }
 
+static unsigned check_gpiomap(uint8_t *buf, unsigned size, int offset) {
+	uint32_t *p = (uint32_t*)(buf + offset);
+	size - offset;
+	if (size < 8 + 12) return 0;
+	// skip empty GPIO related table
+	if (~p[0] || p[1] != 0xffff) return 0;
+	p += 2; size -= 8;
+	for (; size >= 12; p += 3, size -= 12) {
+		uint32_t a = p[0];
+		if (a & 0xfffeff80) {
+			unsigned end = (uint8_t*)(p + 3) - buf;
+			if (a != 0xffff || p[1] != 2 || p[2] != 5) break;
+			printf("0x%x: gpiomap (end = 0x%x)\n", offset + 8, end);
+			return end - offset;
+		}
+		if (p[1] >= 2 || p[2] >= 6) break;
+	}
+	return 0;
+}
+
 static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 	unsigned i = 0, size_req = 0x1c;
 	unsigned size2, ps_size = 0;
@@ -582,6 +604,7 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 				if ((a = p2[0]) == ~0u && p2[1] == ~0u) {
 					unsigned end = (uint8_t*)(p2 + 2) - buf;
 					printf("0x%x: pinmap (end = 0x%x)\n", i, end);
+					end += check_gpiomap(buf, size, end);
 					if (!clues.pinmap_offs) {
 						clues.pinmap_offs = i;
 						if (flags & 1)
@@ -644,6 +667,30 @@ static int run_decoder(uint8_t *mem, size_t size, int argc, char **argv,
 	return 0;
 }
 
+static uint32_t image_base = 0;
+
+static void find_calls(uint8_t *buf, unsigned size, unsigned target) {
+	unsigned i;
+	if (size < 4) return;
+	for (i = 0; i < size - 3; i += 2) {
+		uint16_t *p = (uint16_t*)(buf + i);
+		int a, b;
+		a = p[0];
+		if ((a & 0xf800) == 0xf000) {
+			b = (int32_t)(a << 21) >> (21 - 12);
+			a = p[1];
+			b |= (a & 0x7ff) << 1;
+			// thumb2 extra
+			b ^= (((~a & 0x2800) + 0x800) & 0x3000) << 10;
+			if ((a & 0xd001) == 0xc000) b &= ~3; // BLX
+			else if (!(a & 0x1000)) continue; // !BL
+			b += i + 4;
+			if (image_base + b == target)
+				printf("0x%x: bl%s\n", image_base + i, "x" + (a >> 12 & 1));
+		}
+	}
+}
+
 static void lcd_init_print(int cmd, int ndata, uint8_t *data) {
 	int i;
 	if (cmd < 0) {
@@ -668,6 +715,8 @@ static void lcd_init_dec(uint8_t *buf, unsigned size, unsigned pos, unsigned mod
 	int last_cmd = -1, ndata = 0;
 	uint8_t data[31];
 
+	if (pos < image_base) { printf("!!! pos < base\n"); return; }
+	pos -= image_base;
 	if (mode >= 2) { printf("!!! unknown mode\n"); return; }
 	if (pos >= size) { printf("!!! pos >= size\n"); return; }
 	pos &= ~1;
@@ -755,7 +804,7 @@ static void lcd_init_dec(uint8_t *buf, unsigned size, unsigned pos, unsigned mod
 					break;
 				}
 			} else {
-				printf("bl%s_%x(", "x" + (a >> 12 & 1), b);
+				printf("bl%s_%x(", "x" + (a >> 12 & 1), image_base + b);
 				for (b = 0; c >> b & 1; b++)
 					printf("%s0x%02x", b ? ", " : "", reg[b]);
 				printf(")\n");
@@ -800,6 +849,16 @@ int main(int argc, char **argv) {
 		} else if (!strcmp(argv[1], "unpack")) {
 			scan_fw(mem, size, 2 + 1);
 			argc -= 1; argv += 1;
+		} else if (!strcmp(argv[1], "base")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			image_base = strtoul(argv[2], NULL, 0);
+			argc -= 2; argv += 2;
+		} else if (!strcmp(argv[1], "find_calls")) {
+			uint32_t addr;
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			addr = strtoul(argv[2], NULL, 0);
+			find_calls(mem, size, addr);
+			argc -= 2; argv += 2;
 		} else if (!strcmp(argv[1], "lcd_init_dec")) {
 			unsigned pos;
 			if (argc <= 3) ERR_EXIT("bad command\n");
