@@ -710,13 +710,13 @@ static unsigned dump_flash(spdio_t *io,
 		nread1 = nread; len = nread += nread2;
 		if (READ32_LE(buf + 0x10) != (int)nread1 - 0x200 || // data size
 				READ32_LE(buf + 0x18) != 0x200 || // data offset
-				READ32_LE(buf + 0x20) != 0x254 || // sign data size
+				READ32_LE(buf + 0x20) >> 12 || // sign data size (0x254, 0x234)
 				READ32_LE(buf + 0x28) != (int)nread1 + 0x60) { // sign data offset
 			DBG_LOG("unexpected DHTB signature\n");
 			break;
 		}
 		len += nread2 = READ32_LE(buf + 0x20);
-		nread += read_flash(io, addr, start + nread, nread2, buf, fo, step);
+		nread += read_flash(io, addr, start + nread, nread2, NULL, fo, step);
 	} while (0);
 	DBG_LOG("dump_flash: 0x%08x+0x%x, target: 0x%x, read: 0x%x\n", addr, start, len, nread);
 	fclose(fo);
