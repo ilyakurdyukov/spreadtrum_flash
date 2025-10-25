@@ -507,9 +507,9 @@ static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags)
 
 
 static uint32_t pinmap_findval(uint32_t *p, uint32_t x) {
-	uint32_t a;
-	do if ((a = *p) == x) return p[1]; while ((p += 2, ~a));
-	return a;
+	uint32_t a, ret = ~0;
+	do if ((a = *p) == x) ret = p[1]; while ((p += 2, ~a));
+	return ret;
 }
 
 static void pinmap_info(uint32_t *pinmap) {
@@ -518,18 +518,19 @@ static void pinmap_info(uint32_t *pinmap) {
 		uint32_t x = 0x402a00b8;
 		uint32_t spi0_csn = pinmap_findval(pinmap, x);
 		uint32_t spi0_do = pinmap_findval(pinmap, x + 4);
-		uint32_t spi0_di = pinmap_findval(pinmap, x + 12);
-		uint32_t spi0_clk = pinmap_findval(pinmap, x + 16);
-		uint32_t spi0_cd = pinmap_findval(pinmap, x + 20);
-		printf("pinmap: SPI0 pins = ");
+		uint32_t spi0_di = pinmap_findval(pinmap, x + 8);
+		uint32_t spi0_clk = pinmap_findval(pinmap, x + 12);
+		uint32_t spi0_cd = pinmap_findval(pinmap, x + 16);
+		printf("pinmap: LCD pins = ");
 		PRINTPIN(spi0_csn, ", ")
 		PRINTPIN(spi0_do, ", ")
 		PRINTPIN(spi0_di, ", ")
 		PRINTPIN(spi0_clk, ", ")
 		PRINTPIN(spi0_cd, "\n")
-		// 0x10 and 0 for LCM display
-		if (spi0_clk == 0 && spi0_cd == 0x30) {
-			printf("guess: SPI0 display\n");
+		// 0x10 for LCM display
+		if (spi0_cd == 0) {
+			// The relation between SPI0 pins and SPI1 is unknown.
+			printf("guess: SPI1 display\n");
 		}
 	}
 #undef PRINTPIN
