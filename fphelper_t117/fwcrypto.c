@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+#define OPENSSL_SUPPRESS_DEPRECATED
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
 #include <openssl/bio.h>

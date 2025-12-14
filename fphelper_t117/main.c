@@ -33,12 +33,6 @@ static size_t decode_copy(const uint8_t *src, size_t *src_size, uint8_t *dst, si
 	return n;
 }
 
-static size_t decode_zero(const uint8_t *src, size_t *src_size, uint8_t *dst, size_t dst_size) {
-	if (dst) memset(dst, 0, dst_size);
-	*src_size = 0;
-	return dst_size;
-}
-
 static size_t sprd_lzdec3(const uint8_t *src, size_t *src_size, uint8_t *dst, size_t dst_size) {
 	const uint8_t *src_end = src + *src_size, *src_start = src;
 	uint8_t *dst_end = dst + dst_size, *dst_start = dst;
@@ -162,9 +156,11 @@ static void find_lcd_list(uint8_t *buf, unsigned size, uint32_t offset) {
 
 static void check_nandconf(uint8_t *buf, unsigned size, uint32_t offset) {
 	unsigned size2 = size - offset;
-	uint32_t *p = (uint32_t*)(buf + offset), *start = p;
+	uint32_t *p = (uint32_t*)(buf + offset);
 	for (;; p += 0x38 / 4) {
 		uint32_t t0, t1; unsigned i;
+		if (size2 < 0x38) break;
+		size2 -= 0x38;
 		t0 = p[0];
 		if (!(t0 | p[2])) {
 			for (i = 1; i < 0x38 / 4; i++) {
@@ -538,7 +534,7 @@ static void pinmap_info(uint32_t *pinmap) {
 
 static unsigned check_gpiomap(uint8_t *buf, unsigned size, int offset) {
 	uint32_t *p = (uint32_t*)(buf + offset);
-	size - offset;
+	size -= offset;
 	if (size < 8 + 12) return 0;
 	// skip empty GPIO related table
 	if (~p[0] || p[1] != 0xffff) return 0;
@@ -619,7 +615,6 @@ static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 		} while (0);
 
 		do {
-			uint32_t size2 = size - i;
 			if (p[0] != 0xf8b1) break;
 			if (p[1] != 0) break;
 			if (p[2] != 0x400) break;
@@ -713,7 +708,7 @@ static void lcd_init_dec(uint8_t *buf, unsigned size, unsigned pos, unsigned mod
 	int reg[8], flags = 0;
 	uint16_t *p, *end;
 	int badptr = -1, lcm_wait = badptr, lcm_cmd = badptr, lcm_data = badptr;
-	int last_cmd = -1, ndata = 0;
+	int last_cmd = -1, ndata = 0, cs = 0;
 	uint8_t data[31];
 
 	if (pos < image_base) { printf("!!! pos < base\n"); return; }
@@ -776,11 +771,16 @@ static void lcd_init_dec(uint8_t *buf, unsigned size, unsigned pos, unsigned mod
 					ndata = 0; last_cmd = -1;
 					printf("LCM_DELAY(%u),\n", reg[0]);
 				} else if (c == 3) {
-					if (reg[1] != 0) {
-						printf("!!! 0x%x: r1 != 0\n", CUR_POS - 4);
+					if (lcm_cmd == badptr) {
+						lcm_cmd = b; cs = reg[1];
+						if (cs >> 1) {
+							printf("!!! unexpected cs (%u)\n", cs);
+							break;
+						}
+					} else if (reg[1] != cs) {
+						printf("!!! 0x%x: r1 != cs\n", CUR_POS - 4);
 						break;
 					}
-					if (lcm_cmd == badptr) lcm_cmd = b;
 					if (b == lcm_cmd) {
 						if (last_cmd >= 0 || ndata) {
 							lcd_init_print(last_cmd, ndata, data);
