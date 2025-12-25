@@ -85,7 +85,9 @@ static size_t decode_copy(const uint8_t *src, size_t *src_size, uint8_t *dst, si
 	return n;
 }
 
+__attribute__((unused))
 static size_t decode_zero(const uint8_t *src, size_t *src_size, uint8_t *dst, size_t dst_size) {
+	(void)src;
 	if (dst) memset(dst, 0, dst_size);
 	*src_size = 0;
 	return dst_size;
@@ -510,7 +512,7 @@ static const char* keypad_getname(unsigned a) {
 }
 
 static void check_keymap2(uint8_t *buf, unsigned size, uint32_t addr, int flags) {
-	FILE *fo; unsigned nrow;
+	unsigned nrow;
 	if (!clues.keymap_addr) return;
 	addr = clues.keymap_addr - addr;
 	if (size <= addr) return;
@@ -1201,10 +1203,10 @@ static int run_decoder(uint8_t *mem, size_t size, int argc, char **argv,
 #if WITH_LZMADEC
 static int drps_decode(uint8_t *mem, size_t size,
 		unsigned drps_offs, unsigned index, const char *outfn) {
-	size_t src_addr, src_size, result, dst_size;
+	size_t src_size, result, dst_size;
 	uint8_t *dst = NULL; FILE *fo = NULL;
 	unsigned drps_num, drps_size, i;
-	uint32_t *p, offs;
+	uint32_t *p;
 
 	if (size < drps_offs) FATAL();
 	size -= drps_offs;

@@ -1,5 +1,5 @@
 WITH_LZMADEC = 2
-CFLAGS = -O2 -Wall -Wextra -std=c99 -pedantic -Wno-unused
+CFLAGS = -O2 -Wall -Wextra -std=c99 -pedantic
 APPNAME = fphelper
 
 .PHONY: all clean

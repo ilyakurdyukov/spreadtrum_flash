@@ -63,4 +63,5 @@ make all TOOLCHAIN=$TOOLCHAIN CC=$CLANG
 TOOLCHAIN=/usr/bin/arm-linux-gnueabi
 
 make all TOOLCHAIN=$TOOLCHAIN CC=$TOOLCHAIN-gcc-14
+```
 
