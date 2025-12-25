@@ -1,5 +1,6 @@
 @ -*- tab-width: 8 -*-
 	.arch armv7-a
+	.fpu vfpv4
 	.syntax unified
 
 .macro CODE16_FN name

@@ -57,3 +57,10 @@ CLANG=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-
 make all TOOLCHAIN=$TOOLCHAIN CC=$CLANG
 ```
 
+#### with cross GCC 14.2.0
+
+```
+TOOLCHAIN=/usr/bin/arm-linux-gnueabi
+
+make all TOOLCHAIN=$TOOLCHAIN CC=$TOOLCHAIN-gcc-14
+

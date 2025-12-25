@@ -40,6 +40,8 @@ uint32_t swap_be32(uint32_t v) {
 }
 #endif
 
+// GCC with -flto removes memcpy without this attribute
+__attribute__((used))
 void *memcpy(void *dst, const void *src, size_t len) {
 	uint8_t *d = (uint8_t*)dst;
 	const uint8_t *s = (const uint8_t*)src;
@@ -58,6 +60,7 @@ void *memcpy(void *dst, const void *src, size_t len) {
 	return dst;
 }
 
+__attribute__((used))
 void *memset(void *dst, int c, size_t len) {
 	uint8_t *d = (uint8_t*)dst;
 	while (len--) *d++ = c;
