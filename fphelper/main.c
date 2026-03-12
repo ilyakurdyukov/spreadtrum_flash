@@ -1362,17 +1362,30 @@ static int sdboot_helper_scan(uint8_t *buf, unsigned size,
 static void sdboot_helper(uint8_t *buf, unsigned size) {
 	unsigned nvram_blk = 0x8000;
 	uint32_t entry, sdboot = 0, jump_buf = 0;
-	if (size < 0x1000) return;
 	do {
 		uint32_t a, *p = (uint32_t*)buf;
 		uint32_t entry_offs;
-		unsigned i, k, chip = 0, end = 0;
+		unsigned i, k, chip = 0, end = 0, secure = 0;
+		if (size < 0x1000) break;
+		if (size >= 0x11000)
+			secure = !memcmp(buf + 0x10000, "SPRD-SECUREFLAG", 15);
 		a = p[0];
 		entry_offs = k = a - 0xe59ff000 + 8;
 		if (k != 0x20) {
+			// common SC6531E: 0x24
+			// Nokia SC6531E: 0x3e0
 			if ((k != 0x24 && k != 0x3e0) || p[8] != 0x36353632) break;
+			// Special handling for Nokia, not tested!
+			if (k == 0x3e0) {
+				p = (uint32_t*)(buf + 0x10400);
+				a = p[0];
+				entry_offs = k = a - 0xe59ff000 + 8;
+				if (k != 0x20) break;
+				entry_offs += (uint8_t*)p - buf;
+			}
 			chip = 1;
 		}
+		if (secure != (entry_offs >= 0x10000)) break;
 		for (i = 1; i < 8; i++)
 			if (p[i] != a) break;
 		if (i != 8) break;
@@ -1413,6 +1426,10 @@ end:		j += 0x1000;
 		if (chip == 1 || sdboot < 4 << 20) jump_buf = 0;
 		else if (!jump_buf) break;
 		printf("\nThe instructions below are valid only for this firmware!\n");
+		if (secure)
+			printf("\nWARNING: This phone must be a Nokia with Secure Boot enabled,\n"
+					"    sdboot hasn't been tested on these phones.\n"
+					"    Following the instructions below may brick the phone!\n");
 		{
 			char sdboot0[64], sdboot1[64];
 			if (sdboot) {
