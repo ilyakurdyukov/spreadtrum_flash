@@ -1133,6 +1133,7 @@ int main(int argc, char **argv) {
 	int verbose = 0, fdl_loaded = 0;
 	uint32_t fw_addr = ~0u, ram_addr = ~0u;
 	int keep_charge = 0, end_data = 1, blk_size = 0;
+	int secure_boot = 0;
 
 #if USE_LIBUSB
 	(void)tty;
@@ -1212,6 +1213,10 @@ int main(int argc, char **argv) {
 
 				DBG_LOG("BSL_REP_VER: ");
 				print_string(stderr, io->raw_buf + 4, READ16_BE(io->raw_buf + 2));
+
+				if (READ16_BE(io->raw_buf + 2) != 6 ||
+						memcmp(io->raw_buf + 4, "SPRD3", 6))
+					secure_boot = 1;
 
 				encode_msg(io, BSL_CMD_CONNECT, NULL, 0);
 				send_and_check(io);
@@ -1313,6 +1318,11 @@ int main(int argc, char **argv) {
 			WRITE32_LE(buf, data);
 			if (addr >> 32)
 				ERR_EXIT("32-bit limit reached\n");
+#define CHECK_SECURE \
+	if (~fw_addr && secure_boot) \
+		if ((uint32_t)(addr - fw_addr) < 0x10000) \
+			ERR_EXIT("this operation will brick the phone, cancelled\n");
+			CHECK_SECURE
 			send_buf(io, addr, end_data, 528, buf, 4);
 			argc -= 3; argv += 3;
 
@@ -1326,6 +1336,7 @@ int main(int argc, char **argv) {
 			fn = argv[5];
 			if ((addr | size | offset | (addr + size)) >> 32)
 				ERR_EXIT("32-bit limit reached\n");
+			CHECK_SECURE
 			send_file(io, fn, addr, end_data,
 				blk_size ? blk_size : 528, offset, size);
 			argc -= 5; argv += 5;
@@ -1338,6 +1349,7 @@ int main(int argc, char **argv) {
 			size = str_to_size(argv[3]);
 			if ((addr | size | (addr + size)) >> 32)
 				ERR_EXIT("32-bit limit reached\n");
+			CHECK_SECURE
 			erase_flash(io, addr, size);
 			argc -= 3; argv += 3;
 

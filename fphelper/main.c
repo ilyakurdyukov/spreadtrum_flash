@@ -1377,6 +1377,7 @@ static void sdboot_helper(uint8_t *buf, unsigned size) {
 			if ((k != 0x24 && k != 0x3e0) || p[8] != 0x36353632) break;
 			// Special handling for Nokia, not tested!
 			if (k == 0x3e0) {
+				if (size < 0x11000) break;
 				p = (uint32_t*)(buf + 0x10400);
 				a = p[0];
 				entry_offs = k = a - 0xe59ff000 + 8;
@@ -1425,11 +1426,12 @@ end:		j += 0x1000;
 		printf("sdboot: sdboot = 0x%x\n", sdboot);
 		if (chip == 1 || sdboot < 4 << 20) jump_buf = 0;
 		else if (!jump_buf) break;
+		if (secure) {
+			printf("\nThis phone must be a Nokia/HMD with Secure Boot enabled.\n"
+					"There are no workarounds yet to bypass firmware verification.\n");
+			return;
+		}
 		printf("\nThe instructions below are valid only for this firmware!\n");
-		if (secure)
-			printf("\nWARNING: This phone must be a Nokia with Secure Boot enabled,\n"
-					"    sdboot hasn't been tested on these phones.\n"
-					"    Following the instructions below may brick the phone!\n");
 		{
 			char sdboot0[64], sdboot1[64];
 			if (sdboot) {
