@@ -106,6 +106,10 @@ static uint8_t* loadfile(const char *fn, size_t *num) {
 	return buf;
 }
 
+#define READ16_LE(p) ( \
+	((uint8_t*)(p))[0] | \
+	((uint8_t*)(p))[1] << 8)
+
 #define READ32_LE(p) ( \
 	((uint8_t*)(p))[0] | \
 	((uint8_t*)(p))[1] << 8 | \
@@ -552,6 +556,93 @@ static unsigned check_gpiomap(uint8_t *buf, unsigned size, int offset) {
 	return 0;
 }
 
+static unsigned nv_checksum(const void *src, int len) {
+	uint8_t *s = (uint8_t*)src;
+	uint32_t crc = 0;
+	while (len > 1)
+		crc += s[1] << 8 | s[0], s += 2, len -= 2;
+	if (len) crc += *s;
+	crc = (crc >> 16) + (crc & 0xffff);
+	crc += crc >> 16;
+	return ~crc & 0xffff;
+}
+
+static void scan_nv(uint8_t *buf, unsigned size) {
+	unsigned i, blk;
+	unsigned data_off, dir_count;
+	uint8_t *dir_ptr;
+	if (size < 0x20) {
+		printf("VNTS dump is too small\n");
+		return;
+	}
+	if (READ32_LE(buf) != 0x53544e56) { // "VNTS"
+		printf("wrong VNTS header\n");
+		return;
+	}
+	blk = READ16_LE(buf + 14);
+	if ((blk & (blk - 1)) || blk < 0x100) {
+		printf("invalid VNTS block size\n");
+		return;
+	}
+	data_off = blk * 2;
+	if (size < data_off) {
+		printf("VNTS dump is too small\n");
+		return;
+	}
+	size -= data_off;
+	if (memcmp(buf, buf + blk, blk))
+		printf("VNTS backup header is damaged\n");
+
+	dir_count = READ16_LE(buf + 16);
+	{
+		unsigned dir_size = dir_count * 0x10;
+		dir_size = (dir_size + blk - 1) & -blk;
+		dir_ptr = buf + data_off;
+		data_off += dir_size * 2;
+		if (size < data_off) {
+			printf("VNTS dump is too small\n");
+			return;
+		}
+		if (memcmp(dir_ptr, dir_ptr + dir_size, dir_size))
+			printf("VNTS backup dir is damaged\n");
+	}
+	for (i = 0; i < dir_count; i++) {
+		uint8_t *p = dir_ptr + i * 0x10;
+		unsigned chk, chk1;
+		unsigned n = READ16_LE(p + 2), n2;
+		uint32_t off = READ32_LE(p + 4);
+		unsigned size2;
+		if (!off) continue;
+		// printf("0x%06x: off = 0x%x, size = %u\n", (int)(p - buf), off, n);
+		chk = nv_checksum(p + 2, 14);
+		chk1 = READ16_LE(p);
+		if (chk != chk1) {
+			printf("!!! wrong nvitem link checksum (0x%04x, expected 0x%04x)\n", chk1, chk);
+			continue;
+		}
+		size2 = size - off;
+		if (off < data_off || off >= size || size2 < 12 + n) {
+			printf("!!! invalid nvitem offset (0x%x)\n", off);
+			continue;
+		}
+		p = buf + off;
+		n2 = READ16_LE(p + 6);
+		printf("0x%06x: id = %u, size = %u\n", (int)(p - buf), READ16_LE(p + 4), n2);
+		chk = nv_checksum((char*)p + 4, 8);
+		chk1 = READ16_LE(p);
+		if (chk != chk1)
+			printf("!!! wrong nvitem head checksum (0x%04x, expected 0x%04x)\n", chk1, chk);
+		if (n2 != n) {
+			printf("!!! nvitem size mismatch (%u, expected %u)\n", n2, n);
+			continue;
+		}
+		chk = nv_checksum((char*)p + 12, n);
+		chk1 = READ16_LE(p + 2);
+		if (chk != chk1)
+			printf("!!! wrong nvitem data checksum (0x%04x, expected 0x%04x)\n", chk1, chk);
+	}
+}
+
 static void scan_fw(uint8_t *buf, unsigned size, int flags) {
 	unsigned i = 0, size_req = 0x1c;
 	unsigned size2, ps_size = 0;
@@ -846,6 +937,9 @@ int main(int argc, char **argv) {
 	while (argc > 1) {
 		if (!strcmp(argv[1], "scan")) {
 			scan_fw(mem, size, 2);
+			argc -= 1; argv += 1;
+		} else if (!strcmp(argv[1], "scan_nv")) {
+			scan_nv(mem, size);
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "unpack")) {
 			scan_fw(mem, size, 2 + 1);

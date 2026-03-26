@@ -311,6 +311,10 @@ static unsigned spd_checksum(unsigned crc, const void *src, int len, int final) 
 	((uint8_t*)(p))[3] = (a) >> 24; \
 } while (0)
 
+#define READ16_LE(p) ( \
+	((uint8_t*)(p))[0] | \
+	((uint8_t*)(p))[1] << 8)
+
 #define READ32_LE(p) ( \
 	((uint8_t*)(p))[0] | \
 	((uint8_t*)(p))[1] << 8 | \
@@ -686,13 +690,21 @@ static unsigned dump_flash(spdio_t *io,
 		len = sizeof(buf);
 		nread = read_flash(io, addr, start, len, buf, fo, step);
 		if (nread != len)
-			ERR_EXIT("can't read DHTB header\n");
+			ERR_EXIT("can't read partition header\n");
 		// "DHTB" -> "BTHD", Boot Header
-		if (READ32_LE(buf) != 0x42544844 || READ32_LE(buf + 4) != 1)
-			ERR_EXIT("unexpected DHTB header\n");
-		len = READ32_LE(buf + 0x30);
-		if (len >> 31) ERR_EXIT("unexpected DHTB size (0x%x)\n", len);
-		len += 0x200;
+		if (READ32_LE(buf) == 0x42544844 && READ32_LE(buf + 4) == 1) {
+			len = READ32_LE(buf + 0x30);
+			if (len >> 31) ERR_EXIT("unexpected DHTB size (0x%x)\n", len);
+			len += 0x200;
+		// "VNTS" -> "STNV"
+		} else if (READ32_LE(buf) == 0x53544e56) {
+			unsigned nblk = READ16_LE(buf + 12);
+			unsigned blk = READ16_LE(buf + 14);
+			if (nblk < 4) ERR_EXIT("unexpected VNTS header\n");
+			if ((blk & (blk - 1)) || blk < 0x100)
+				ERR_EXIT("unexpected VNTS block size (0x%x)\n", blk);
+			len = blk * nblk;
+		} else ERR_EXIT("unable to determine partition size\n");
 	}
 	nread += read_flash(io, addr, start + nread, len - nread, NULL, fo, step);
 	if (mode == 1 && len == nread) do {	// read DHTB signature
