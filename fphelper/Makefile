@@ -18,3 +18,7 @@ clean:
 
 $(APPNAME): main.c
 	$(CC) -s $(CFLAGS) -o $@ $< $(LIBS)
+
+fwcrypto: LIBS += -lcrypto
+fwcrypto: fwcrypto.c
+	$(CC) -s $(CFLAGS) -o $@ $< $(LIBS)

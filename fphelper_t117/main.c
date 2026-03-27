@@ -570,6 +570,7 @@ static unsigned nv_checksum(const void *src, int len) {
 static void scan_nv(uint8_t *buf, unsigned size) {
 	unsigned i, blk;
 	unsigned data_off, dir_count;
+	unsigned first_id;
 	uint8_t *dir_ptr;
 	if (size < 0x20) {
 		printf("VNTS dump is too small\n");
@@ -593,6 +594,7 @@ static void scan_nv(uint8_t *buf, unsigned size) {
 	if (memcmp(buf, buf + blk, blk))
 		printf("VNTS backup header is damaged\n");
 
+	first_id = READ16_LE(buf + 8);
 	dir_count = READ16_LE(buf + 16);
 	{
 		unsigned dir_size = dir_count * 0x10;
@@ -611,9 +613,9 @@ static void scan_nv(uint8_t *buf, unsigned size) {
 		unsigned chk, chk1;
 		unsigned n = READ16_LE(p + 2), n2;
 		uint32_t off = READ32_LE(p + 4);
-		unsigned size2;
+		unsigned size2, id = i + first_id, id2;
 		if (!off) continue;
-		// printf("0x%06x: off = 0x%x, size = %u\n", (int)(p - buf), off, n);
+		printf("0x%06x: id = %u, size = %u\n", off, id, n);
 		chk = nv_checksum(p + 2, 14);
 		chk1 = READ16_LE(p);
 		if (chk != chk1) {
@@ -626,8 +628,10 @@ static void scan_nv(uint8_t *buf, unsigned size) {
 			continue;
 		}
 		p = buf + off;
+		id2 = READ16_LE(p + 4);
 		n2 = READ16_LE(p + 6);
-		printf("0x%06x: id = %u, size = %u\n", (int)(p - buf), READ16_LE(p + 4), n2);
+		if (id2 != id)
+			printf("!!! nvitem id mismatch (%u, expected %u)\n", id2, id);
 		chk = nv_checksum((char*)p + 4, 8);
 		chk1 = READ16_LE(p);
 		if (chk != chk1)
