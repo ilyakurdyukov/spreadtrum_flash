@@ -7,6 +7,7 @@
 #include <openssl/rsa.h>
 #include <openssl/bio.h>
 #include <openssl/sha.h>
+#include <openssl/md5.h>
 
 static void sprd_sha1(const uint8_t *buf, size_t len, uint8_t *hash) {
 	size_t i; const uint8_t *p = buf;
@@ -52,6 +53,12 @@ static RSA *rsa_from_file(const char *rsa_fn, int priv) {
 	return rsa;
 }
 
+#define READ32_BE(p) ( \
+	((uint8_t*)(p))[0] << 24 | \
+	((uint8_t*)(p))[1] << 16 | \
+	((uint8_t*)(p))[2] << 8 | \
+	((uint8_t*)(p))[3])
+
 #define WRITE32_LE(p, a) do { \
 	((uint8_t*)(p))[0] = (uint8_t)(a); \
 	((uint8_t*)(p))[1] = (a) >> 8; \
@@ -67,6 +74,43 @@ static RSA *rsa_from_file(const char *rsa_fn, int priv) {
 
 #define ERR_EXIT(...) \
 	do { fprintf(stderr, "!!! " __VA_ARGS__); exit(1); } while (0)
+
+static void rand_init(uint8_t *seed, unsigned init) {
+	int i, a = 0;
+	// MD5("", 1, hash);
+	static const uint8_t hash[16] = {
+		0x93,0xb8,0x85,0xad,0xfe,0x0d,0xa0,0x89,
+		0xcd,0xf6,0x34,0x90,0x4f,0xd5,0x9f,0x71 };
+	for (i = 0; i < 16; i++) seed[i] = init, init >>= 1;
+  for (i = 15; i >= 0; i--, a >>= 8)
+		seed[i] = a += seed[i] + (hash[i] << 8);
+}
+
+static inline void rand_next(uint8_t *seed, uint8_t *buf) {
+	unsigned i = 16;
+	if (buf) MD5(seed, 16, buf);
+	// seems to be a typo in the original code
+	// should be preincrement
+	while (!seed[--i]++ && i) (void)0;
+}
+
+static int fast_check_n(uint32_t hi) {
+	unsigned i; uint8_t r[16], buf[20];
+	for (i = 0; i < 1 << 23; i++) {
+		uint32_t t0, t1;
+		rand_init(r, i);
+		rand_next(r, buf); // p
+		rand_next(r, NULL);
+		rand_next(r, NULL);
+		rand_next(r, NULL);
+		rand_next(r, buf + 4); // q
+		t0 = READ32_BE(buf) | 0xc0000000;
+		t1 = READ32_BE(buf + 4) | 0xc0000000;
+		t0 = (uint64_t)t0 * t1 >> 32;
+		if (hi - t0 < 2) return i;
+	}
+	return -1;
+}
 
 static int verify_fw(const char *bin_fn) {
 	uint8_t *image, *boot_key, *vlr_head;
@@ -125,6 +169,8 @@ static int verify_fw(const char *bin_fn) {
 		int padding = RSA_NO_PADDING;
 		int key_bits = 1024;
 		int dec_len;
+
+		printf("high bits of N: 0x%08x\n", READ32_BE(boot_key + 4));
 
 		rsa_n = BN_bin2bn(boot_key + 4, key_bits >> 3, NULL);
 		rsa_e = BN_bin2bn(boot_key, 4, NULL);
@@ -251,6 +297,13 @@ int main(int argc, char **argv) {
 //           write_data fw+0x10204 0 0 patch.bin
 */
 			argv += 5; argc -= 5;
+		} else if (!strcmp(argv[1], "check_n")) {
+			int ret;
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			ret = fast_check_n(strtol(argv[2], NULL, 0));
+			if (ret < 0) printf("key seed not found\n");
+			else printf("found key seed: 0x%06x\n", ret);
+			argv += 2; argc -= 2;
 		} else {
 			ERR_EXIT("unknown command\n");
 		}
