@@ -567,6 +567,60 @@ static unsigned nv_checksum(const void *src, int len) {
 	return ~crc & 0xffff;
 }
 
+static int decode_imei(uint8_t *p, uint8_t *d) {
+	unsigned a, i;
+	if ((*p & 15) != 10) return 0;
+	for (i = 1; i < 16; i++) {
+		a = p[i >> 1];
+		if (i & 1) a >>= 4;
+		a &= 15;
+		if (a >= 10) return 0;
+		*d++ = '0' + a;
+	}
+	*d = 0;
+	return 15;
+}
+
+static void scan_nvitem(uint8_t *buf, unsigned id, unsigned size) {
+	(void)id;
+	// IMEI id: 5, 377, 390, 484
+	if (size == 8) {
+		uint8_t imei[16];
+		if (decode_imei(buf, imei))
+			printf("IMEI = %s\n", imei);
+	}
+}
+
+static void scan_nvimg(uint8_t *buf, unsigned size) {
+	unsigned i = 4, id, n, last = 0;
+	if (size < 8) {
+		printf("NV image dump is too small\n");
+		return;
+	}
+	printf("nvimg id: 0x%08x\n", READ32_LE(buf));
+	size -= 4;
+	for (;;) {
+		if (size < 4) break;
+		size -= 4;
+		id = READ16_LE(buf + i);
+		n = READ16_LE(buf + i + 2);
+		if (id <= last) break;
+		last = id;
+		i += 4;
+		if ((id & n) == 0xffff) {
+			printf("NV image size = 0x%x\n", i);
+			return;
+		}
+		printf("0x%06x: id = %u, size = %u\n", i, id, n);
+		n = (n + 3) & ~3;
+		if (size < n) break;
+		size -= n;
+		scan_nvitem(buf + i, id, n);
+		i += n;
+	}
+	printf("NV image read error at 0x%x\n", i);
+}
+
 static void scan_nv(uint8_t *buf, unsigned size) {
 	unsigned i, blk;
 	unsigned data_off, dir_count;
@@ -582,9 +636,11 @@ static void scan_nv(uint8_t *buf, unsigned size) {
 	}
 	blk = READ16_LE(buf + 14);
 	if ((blk & (blk - 1)) || blk < 0x100) {
-		printf("invalid VNTS block size\n");
+		printf("invalid VNTS block size (0x%x)\n", blk);
 		return;
 	}
+	printf("nvimg id: 0x%08x\n", READ32_LE(buf + 4));
+	printf("item range: %u..%u\n", READ16_LE(buf + 8), READ16_LE(buf + 10));
 	data_off = blk * 2;
 	if (size < data_off) {
 		printf("VNTS dump is too small\n");
@@ -615,7 +671,7 @@ static void scan_nv(uint8_t *buf, unsigned size) {
 		uint32_t off = READ32_LE(p + 4);
 		unsigned size2, id = i + first_id, id2;
 		if (!off) continue;
-		printf("0x%06x: id = %u, size = %u\n", off, id, n);
+		printf("0x%06x: id = %u, size = %u\n", off + 12, id, n);
 		chk = nv_checksum(p + 2, 14);
 		chk1 = READ16_LE(p);
 		if (chk != chk1) {
@@ -640,10 +696,11 @@ static void scan_nv(uint8_t *buf, unsigned size) {
 			printf("!!! nvitem size mismatch (%u, expected %u)\n", n2, n);
 			continue;
 		}
-		chk = nv_checksum((char*)p + 12, n);
+		chk = nv_checksum(p + 12, n);
 		chk1 = READ16_LE(p + 2);
 		if (chk != chk1)
 			printf("!!! wrong nvitem data checksum (0x%04x, expected 0x%04x)\n", chk1, chk);
+		scan_nvitem(p + 12, id, n);
 	}
 }
 
@@ -944,6 +1001,9 @@ int main(int argc, char **argv) {
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "scan_nv")) {
 			scan_nv(mem, size);
+			argc -= 1; argv += 1;
+		} else if (!strcmp(argv[1], "scan_nvimg")) {
+			scan_nvimg(mem, size);
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "unpack")) {
 			scan_fw(mem, size, 2 + 1);

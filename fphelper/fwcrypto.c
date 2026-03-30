@@ -82,7 +82,7 @@ static void rand_init(uint8_t *seed, unsigned init) {
 		0x93,0xb8,0x85,0xad,0xfe,0x0d,0xa0,0x89,
 		0xcd,0xf6,0x34,0x90,0x4f,0xd5,0x9f,0x71 };
 	for (i = 0; i < 16; i++) seed[i] = init, init >>= 1;
-  for (i = 15; i >= 0; i--, a >>= 8)
+	for (i = 15; i >= 0; i--, a >>= 8)
 		seed[i] = a += seed[i] + (hash[i] << 8);
 }
 
@@ -287,7 +287,7 @@ int main(int argc, char **argv) {
 			argv += 2; argc -= 2;
 		} else if (!strcmp(argv[1], "sign_fw")) {
 			uint32_t size;
-			if (argc <= 2) ERR_EXIT("bad command\n");
+			if (argc <= 5) ERR_EXIT("bad command\n");
 			size = strtol(argv[4], NULL, 0); // -1 = don't change the size
 			// $ ./fwcrypto sign_fw dump.bin key.pem fw_size signed.bin
 			sign_fw(argv[2], argv[3], size, argv[5]);

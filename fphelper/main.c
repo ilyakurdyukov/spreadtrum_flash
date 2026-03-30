@@ -1366,6 +1366,7 @@ static void sdboot_helper(uint8_t *buf, unsigned size) {
 		uint32_t a, *p = (uint32_t*)buf;
 		uint32_t entry_offs;
 		unsigned i, k, chip = 0, end = 0, secure = 0;
+		const char *extra_args = "";
 		if (size < 0x1000) break;
 		if (size >= 0x11000)
 			secure = !memcmp(buf + 0x10000, "SPRD-SECUREFLAG", 15);
@@ -1375,9 +1376,11 @@ static void sdboot_helper(uint8_t *buf, unsigned size) {
 			// common SC6531E: 0x24
 			// Nokia SC6531E: 0x3e0
 			if ((k != 0x24 && k != 0x3e0) || p[8] != 0x36353632) break;
-			// Special handling for Nokia, not tested!
+			// Special handling for Nokia/HMD
 			if (k == 0x3e0) {
 				if (size < 0x11000) break;
+				if (*(uint32_t*)(buf + 0x2dc) != 0x01000100) break; // RSA E
+				if (*(uint32_t*)(buf + 0x10200) != 0x524c56ff) break; // VLR
 				p = (uint32_t*)(buf + 0x10400);
 				a = p[0];
 				entry_offs = k = a - 0xe59ff000 + 8;
@@ -1426,12 +1429,21 @@ end:		j += 0x1000;
 		printf("sdboot: sdboot = 0x%x\n", sdboot);
 		if (chip == 1 || sdboot < 4 << 20) jump_buf = 0;
 		else if (!jump_buf) break;
-		if (secure) {
-			printf("\nThis phone must be a Nokia/HMD with Secure Boot enabled.\n"
-					"There are no workarounds yet to bypass firmware verification.\n");
-			return;
-		}
 		printf("\nThe instructions below are valid only for this firmware!\n");
+		if (secure) {
+			uint8_t *p = buf + 0x2dc;
+			uint32_t n = p[4] << 24 | p[5] << 16 | p[6] << 8 | p[7];
+			uint32_t off = 0x10204;
+			extra_args = " end_data 0";
+			printf("\nWarning: This phone must be a Nokia/HMD with Secure Boot enabled.\n");
+			printf("\nFirst you need to unlock the firmware for modifications:\n\n");
+			printf("./spd_dump%s fdl nor_fdl1.bin 0x40004000 \\\n", extra_args);
+			printf("  write_data fw+0x%x 0 0 vlr_%08x.bin\n\n", off, n);
+			printf("If there is no \"vlr_%08x.bin\", ask for it in the issues.\n\n", n);
+			printf("To restore the original firmware signature (keep the flash dump for this):\n\n");
+			printf("./spd_dump%s fdl nor_fdl1.bin 0x40004000 \\\n", extra_args);
+			printf("  write_data fw+0x%x 0x%x 0x88 <flash.bin>\n\n", off, off);
+		}
 		{
 			char sdboot0[64], sdboot1[64];
 			if (sdboot) {
@@ -1443,9 +1455,9 @@ end:		j += 0x1000;
 				strcpy(sdboot1, "$(($sdboot+4))");
 			}
 			printf("\n# sdboot test run:\n\n");
-			printf("./spd_dump fdl sdboot%u.bin 0x40004000\n", chip);
+			printf("./spd_dump%s fdl sdboot%u.bin 0x40004000\n", extra_args, chip);
 			printf("\n# sdboot install/update:\n\n");
-			printf("./spd_dump fdl nor_fdl1.bin 0x40004000 \\\n");
+			printf("./spd_dump%s fdl nor_fdl1.bin 0x40004000 \\\n", extra_args);
 			if (jump_buf) {
 				printf("  write_word fw+0x%x 0x%x \\\n", entry_offs, jump_buf + 0x1c + 8);
 				printf("  write_data fw+0x%x 0 0 jump4m.bin \\\n", jump_buf + 0x1c);
@@ -1458,7 +1470,7 @@ end:		j += 0x1000;
 			printf("# sdboot remove:\n\n");
 			if (jump_buf)
 				printf("echo \"============================\" > jump_orig.bin\n");
-			printf("./spd_dump fdl nor_fdl1.bin 0x40004000 \\\n");
+			printf("./spd_dump%s fdl nor_fdl1.bin 0x40004000 \\\n", extra_args);
 			printf("  write_word fw+0x%x 0x%x \\\n", entry_offs, entry);
 			if (jump_buf)
 				printf("  write_data fw+0x%x 0 0x1c jump_orig.bin \\\n", jump_buf + 0x1c);

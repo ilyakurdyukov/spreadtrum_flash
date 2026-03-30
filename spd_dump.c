@@ -681,7 +681,7 @@ static unsigned read_flash(spdio_t *io,
 static unsigned dump_flash(spdio_t *io,
 		uint32_t addr, uint32_t start, uint32_t len,
 		const char *fn, unsigned step, int mode) {
-	uint32_t nread = 0;
+	uint32_t nread = 0; char dhtb = 0;
 	FILE *fo = fopen(fn, "wb");
 	if (!fo) ERR_EXIT("fopen(dump) failed\n");
 
@@ -695,7 +695,7 @@ static unsigned dump_flash(spdio_t *io,
 		if (READ32_LE(buf) == 0x42544844 && READ32_LE(buf + 4) == 1) {
 			len = READ32_LE(buf + 0x30);
 			if (len >> 31) ERR_EXIT("unexpected DHTB size (0x%x)\n", len);
-			len += 0x200;
+			len += 0x200; dhtb = 1;
 		// "VNTS" -> "STNV"
 		} else if (READ32_LE(buf) == 0x53544e56) {
 			unsigned nblk = READ16_LE(buf + 12);
@@ -707,7 +707,7 @@ static unsigned dump_flash(spdio_t *io,
 		} else ERR_EXIT("unable to determine partition size\n");
 	}
 	nread += read_flash(io, addr, start + nread, len - nread, NULL, fo, step);
-	if (mode == 1 && len == nread) do {	// read DHTB signature
+	if (dhtb && len == nread) do {	// read DHTB signature
 		uint8_t buf[0x60];
 		uint32_t nread2, nread1;
 		nread2 = read_flash(io, addr, start + nread, 0x60, buf, NULL, step);
