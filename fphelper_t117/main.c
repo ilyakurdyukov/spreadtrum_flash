@@ -622,9 +622,8 @@ static void scan_nvimg(uint8_t *buf, unsigned size) {
 }
 
 static void scan_nv(uint8_t *buf, unsigned size) {
-	unsigned i, blk;
-	unsigned data_off, dir_count;
-	unsigned first_id;
+	unsigned blk, data_off, dir_count, dir_size;
+	unsigned i, first_id;
 	uint8_t *dir_ptr;
 	if (size < 0x20) {
 		printf("VNTS dump is too small\n");
@@ -646,24 +645,22 @@ static void scan_nv(uint8_t *buf, unsigned size) {
 		printf("VNTS dump is too small\n");
 		return;
 	}
-	size -= data_off;
 	if (memcmp(buf, buf + blk, blk))
 		printf("VNTS backup header is damaged\n");
 
 	first_id = READ16_LE(buf + 8);
 	dir_count = READ16_LE(buf + 16);
-	{
-		unsigned dir_size = dir_count * 0x10;
-		dir_size = (dir_size + blk - 1) & -blk;
-		dir_ptr = buf + data_off;
-		data_off += dir_size * 2;
-		if (size < data_off) {
-			printf("VNTS dump is too small\n");
-			return;
-		}
-		if (memcmp(dir_ptr, dir_ptr + dir_size, dir_size))
-			printf("VNTS backup dir is damaged\n");
+	dir_size = dir_count * 0x10;
+	dir_size = (dir_size + blk - 1) & -blk;
+	dir_ptr = buf + data_off;
+	if (size - data_off < dir_size * 2) {
+		printf("VNTS dump is too small\n");
+		return;
 	}
+	data_off += dir_size * 2;
+	if (memcmp(dir_ptr, dir_ptr + dir_size, dir_size))
+		printf("VNTS backup dir is damaged\n");
+
 	for (i = 0; i < dir_count; i++) {
 		uint8_t *p = dir_ptr + i * 0x10;
 		unsigned chk, chk1;
@@ -679,7 +676,7 @@ static void scan_nv(uint8_t *buf, unsigned size) {
 			continue;
 		}
 		size2 = size - off;
-		if (off < data_off || off >= size || size2 < 12 + n) {
+		if (size < off || off < data_off || size2 < 12 + n) {
 			printf("!!! invalid nvitem offset (0x%x)\n", off);
 			continue;
 		}
