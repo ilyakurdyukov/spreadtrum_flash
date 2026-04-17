@@ -5,7 +5,7 @@ APPNAME = fphelper_t117
 all: $(APPNAME)
 
 clean:
-	$(RM) $(APPNAME)
+	$(RM) $(APPNAME) fwcrypto
 
 $(APPNAME): main.c
 	$(CC) -s $(CFLAGS) -o $@ $< $(LIBS)

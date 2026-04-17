@@ -14,7 +14,7 @@ $(APPNAME): lzmadec.h
 endif
 
 clean:
-	$(RM) $(APPNAME)
+	$(RM) $(APPNAME) fwcrypto
 
 $(APPNAME): main.c
 	$(CC) -s $(CFLAGS) -o $@ $< $(LIBS)

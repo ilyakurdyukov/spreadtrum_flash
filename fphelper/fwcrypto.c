@@ -53,6 +53,13 @@ static RSA *rsa_from_file(const char *rsa_fn, int priv) {
 	return rsa;
 }
 
+#define WRITE32_BE(p, a) do { \
+	((uint8_t*)(p))[0] = (a) >> 24; \
+	((uint8_t*)(p))[1] = (a) >> 16; \
+	((uint8_t*)(p))[2] = (a) >> 8; \
+	((uint8_t*)(p))[3] = (uint8_t)(a); \
+} while (0)
+
 #define READ32_BE(p) ( \
 	((uint8_t*)(p))[0] << 24 | \
 	((uint8_t*)(p))[1] << 16 | \
@@ -200,6 +207,173 @@ static int verify_fw(const char *bin_fn) {
 	return 0;
 }
 
+typedef uint32_t bignum_t;
+
+static void bignum_frombin(bignum_t *d, uint8_t *s, unsigned n) {
+	unsigned i;
+	s += n;
+	for (i = 0; i < n / 4; i++) s -= 4, *d++ = READ32_BE(s);
+	if ((n &= 3)) {
+		uint32_t a = s[-1];
+		if (n > 1) {
+			a |= s[-2] << 8;
+			if (n > 2) a |= s[-3] << 16;
+		}
+		*d = a;
+	}
+}
+
+static void bignum_tobin(uint8_t *d, bignum_t *s, unsigned n) {
+	unsigned i;
+	d += n * 4;
+	for (i = 0; i < n; i++) { uint32_t a = *s++; d -= 4; WRITE32_BE(d, a); }
+}
+
+static void bignum_mul(bignum_t *d, bignum_t *s1, unsigned n1, bignum_t *s2, unsigned n2) {
+	unsigned i, j;
+	memset(d, 0, (n1 + n2) * sizeof(*d));
+	for (i = 0; i < n1; i++, d++) {
+		uint32_t m = *s1++, c = 0; uint64_t a, b;
+		for (j = 0; j < n2; j++)
+			b = (uint64_t)m * s2[j],
+			d[j] = a = (uint64_t)d[j] + (uint32_t)b + c,
+			c = (a >> 32) + (uint32_t)(b >> 32);
+		while (c) a = (uint64_t)d[j] + c, d[j++] = a, c = a >> 32;
+	}
+}
+
+static uint32_t rev_mul32(uint32_t v, uint32_t x) {
+	uint32_t i = 1, a = 0;
+	for (; i; i *= 2, v /= 2) if (v & 1) a |= i, v -= x;
+	return a;
+}
+
+static RSA* create_rsa(BIGNUM *n, BIGNUM *e, BIGNUM *p, BIGNUM *q) {
+	RSA *rsa = RSA_new();
+	BN_CTX *ctx = BN_CTX_new();
+	BIGNUM *d = BN_new(), *phi = BN_new();
+	BIGNUM *p1 = BN_new(), *q1 = BN_new();
+
+	if (!rsa) ERR_EXIT("RSA_new failed\n");
+
+	// BN_mul(n, p, q, ctx);
+	BN_sub(p1, p, BN_value_one()); // p-1
+	BN_sub(q1, q, BN_value_one()); // q-1
+	BN_mul(phi, p1, q1, ctx);
+	BN_mod_inverse(d, e, phi, ctx);
+
+	RSA_set0_key(rsa, n, e, d);
+	RSA_set0_factors(rsa, p, q);
+	{
+		BIGNUM *dmp1 = BN_new(), *dmq1 = BN_new(), *iqmp = BN_new();
+		BN_mod(dmp1, d, p1, ctx); // d mod (p-1)
+		BN_mod(dmq1, d, q1, ctx); // d mod (q-1)
+		BN_mod_inverse(iqmp, q, p, ctx);
+		RSA_set0_crt_params(rsa, dmp1, dmq1, iqmp);
+	}
+	BN_free(phi); BN_free(p1); BN_free(q1);
+	BN_CTX_free(ctx);
+	return rsa;
+}
+
+static RSA* find_boot_key(uint8_t *boot_key) {
+	uint8_t buf[128];
+	bignum_t p[16], q[16], n[32], n2[32];
+	uint32_t iter;
+	RSA *rsa;
+
+	bignum_frombin(n, boot_key + 4, 128);
+	printf("boot key N: 0x%08x..%08x\n", n[31], n[0]);
+
+	int seed = fast_check_n(READ32_BE(boot_key + 4));
+	if (seed < 0) ERR_EXIT("key seed not found\n");
+	printf("found key seed: 0x%06x\n", seed);
+
+	{
+		uint8_t r[16]; unsigned i;
+		rand_init(r, seed);
+		for (i = 0; i < 128; i += 16)
+			rand_next(r, buf + i);
+	}
+	bignum_frombin(p, buf, 64);
+	bignum_frombin(q, buf + 64, 64);
+
+	p[0] |= 1; p[15] |= 3u << 30;
+	q[0] |= 1; q[15] |= 3u << 30;
+
+	for (iter = 0; iter < 1u << 31; iter++) {
+		uint32_t p0 = p[0] ^ iter << 1;
+		uint32_t q0 = rev_mul32(n[0], p0);
+		uint32_t n1 = (uint64_t)p0 * q0 >> 32;
+		n1 += p0 * q[1] + q0 * p[1];
+		if (n1 == n[1]) {
+			uint32_t old_p0 = p[0], old_q0 = q[0];
+			printf("found p0/q0 match: 0x%08x 0x%08x\n", p0, q0);
+			p[0] = p0; q[0] = q0;
+			bignum_mul(n2, p, 16, q, 16);
+			if (!memcmp(n2, n, sizeof(n))) goto found;
+			p[0] = old_p0; q[0] = old_q0;
+		}
+	}
+	ERR_EXIT("key not found\n");
+found:
+	{
+		BIGNUM *rsa_n, *rsa_e, *rsa_p, *rsa_q;
+		unsigned key_bits = 1024, swap;
+
+		rsa_n = BN_bin2bn(boot_key + 4, 1024 >> 3, NULL);
+		rsa_e = BN_bin2bn(boot_key, 4, NULL);
+
+		bignum_tobin(buf, p, 16);
+		bignum_tobin(buf + 64, q, 16);
+		// P must be greater than Q
+		swap = memcmp(p, q, 64) < 0 ? 64 : 0;
+		rsa_p = BN_bin2bn(buf + swap, key_bits >> 4, NULL);
+		rsa_q = BN_bin2bn(buf + (swap ^ 64), key_bits >> 4, NULL);
+
+		rsa = create_rsa(rsa_n, rsa_e, rsa_p, rsa_q);
+	}
+	return rsa;
+}
+
+static int find_fw_key(const char *bin_fn, const char *priv_fn) {
+	uint8_t *image, *boot_key;
+	size_t file_size; unsigned boot_size;
+	RSA *rsa; int ret;
+
+	image = loadfile(bin_fn, &file_size);
+	if (!image)
+		ERR_EXIT("loadfile(\"%s\") failed\n", bin_fn);
+
+	if (file_size < 0x10400 || memcmp(image + 0x20, "2656", 4))
+		ERR_EXIT("unexpected header\n");
+
+	boot_size = READ32_LE(image + 0x24);
+	printf("boot size: 0x%x\n", boot_size * 4);
+	if (boot_size >= 0x4000)
+		ERR_EXIT("unexpected boot size\n");
+
+	boot_key = image + 0x2dc;
+
+	if (memcmp(image + 0x10000, "SPRD-SECUREFLAG", 15))
+		ERR_EXIT("bad sign header\n");
+
+	rsa = find_boot_key(boot_key);
+	ret = RSA_check_key(rsa);
+	if (ret != 1) ERR_EXIT("RSA_check_key failed\n");
+
+	{
+		BIO *bio = BIO_new_file(priv_fn, "wb");
+		if (!bio) ERR_EXIT("BIO_new_file failed\n");
+		ret = PEM_write_bio_RSAPrivateKey(bio, rsa, NULL, NULL, 0, NULL, NULL);
+		if (ret != 1) ERR_EXIT("PEM_write_bio_RSAPrivateKey failed\n");
+		BIO_free_all(bio);
+	}
+
+	RSA_free(rsa);
+	return 0;
+}
+
 static int sign_fw(const char *bin_fn, const char *priv_fn,
 		uint32_t new_fw_size, const char *out_fn) {
 	uint8_t *image, *boot_key, *vlr_head;
@@ -233,7 +407,8 @@ static int sign_fw(const char *bin_fn, const char *priv_fn,
 
 	sprd_sha1(image + 0x10400, fw_size, data_hash);
 
-	rsa = rsa_from_file(priv_fn, 1);
+	if (*priv_fn) rsa = rsa_from_file(priv_fn, 1);
+	else rsa = find_boot_key(boot_key);
 	if (!rsa) exit(1);
 
 	{
@@ -285,6 +460,10 @@ int main(int argc, char **argv) {
 			if (argc <= 2) ERR_EXIT("bad command\n");
 			verify_fw(argv[2]);
 			argv += 2; argc -= 2;
+		} else if (!strcmp(argv[1], "find_fw_key")) {
+			if (argc <= 3) ERR_EXIT("bad command\n");
+			find_fw_key(argv[2], argv[3]);
+			argv += 3; argc -= 3;
 		} else if (!strcmp(argv[1], "sign_fw")) {
 			uint32_t size;
 			if (argc <= 5) ERR_EXIT("bad command\n");

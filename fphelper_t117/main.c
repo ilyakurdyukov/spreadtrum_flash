@@ -591,13 +591,13 @@ static void scan_nvitem(uint8_t *buf, unsigned id, unsigned size) {
 	}
 }
 
-static void scan_nvimg(uint8_t *buf, unsigned size) {
+static void scan_nv1(uint8_t *buf, unsigned size) {
 	unsigned i = 4, id, n, last = 0;
 	if (size < 8) {
-		printf("NV image dump is too small\n");
+		printf("nv1 dump is too small\n");
 		return;
 	}
-	printf("nvimg id: 0x%08x\n", READ32_LE(buf));
+	printf("nv1 id: 0x%08x\n", READ32_LE(buf));
 	size -= 4;
 	for (;;) {
 		if (size < 4) break;
@@ -608,7 +608,7 @@ static void scan_nvimg(uint8_t *buf, unsigned size) {
 		last = id;
 		i += 4;
 		if ((id & n) == 0xffff) {
-			printf("NV image size = 0x%x\n", i);
+			printf("nv1 size = 0x%x\n", i + 4);
 			return;
 		}
 		printf("0x%06x: id = %u, size = %u\n", i, id, n);
@@ -618,7 +618,7 @@ static void scan_nvimg(uint8_t *buf, unsigned size) {
 		scan_nvitem(buf + i, id, n);
 		i += n;
 	}
-	printf("NV image read error at 0x%x\n", i);
+	printf("nv1 read error at 0x%x\n", i);
 }
 
 static void scan_nv(uint8_t *buf, unsigned size) {
@@ -638,7 +638,7 @@ static void scan_nv(uint8_t *buf, unsigned size) {
 		printf("invalid VNTS block size (0x%x)\n", blk);
 		return;
 	}
-	printf("nvimg id: 0x%08x\n", READ32_LE(buf + 4));
+	printf("nv1 id: 0x%08x\n", READ32_LE(buf + 4));
 	printf("item range: %u..%u\n", READ16_LE(buf + 8), READ16_LE(buf + 10));
 	data_off = blk * 2;
 	if (size < data_off) {
@@ -999,8 +999,8 @@ int main(int argc, char **argv) {
 		} else if (!strcmp(argv[1], "scan_nv")) {
 			scan_nv(mem, size);
 			argc -= 1; argv += 1;
-		} else if (!strcmp(argv[1], "scan_nvimg")) {
-			scan_nvimg(mem, size);
+		} else if (!strcmp(argv[1], "scan_nv1")) {
+			scan_nv1(mem, size);
 			argc -= 1; argv += 1;
 		} else if (!strcmp(argv[1], "unpack")) {
 			scan_fw(mem, size, 2 + 1);
