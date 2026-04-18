@@ -301,18 +301,29 @@ static RSA* find_boot_key(uint8_t *boot_key) {
 	p[0] |= 1; p[15] |= 3u << 30;
 	q[0] |= 1; q[15] |= 3u << 30;
 
-	for (iter = 0; iter < 1u << 31; iter++) {
-		uint32_t p0 = p[0] ^ iter << 1;
+	// here should be a check whether P and Q are not divisible by 3, 5, 7, 11
+	// otherwise increase by 2, but the search is already fast
+
+	for (iter = 0; iter < 1u << 25; iter += 2) {
+		uint32_t p0 = p[0] + iter;
 		uint32_t q0 = rev_mul32(n[0], p0);
-		uint32_t n1 = (uint64_t)p0 * q0 >> 32;
+		uint32_t n1;
+		if ((q0 - q[0]) >> 25) continue;
+		n1 = (uint64_t)p0 * q0 >> 32;
+		// fix possible overflow
+		if (p0 < p[0]) n1 += q0;
+		if (q0 < q[0]) n1 += p0;
 		n1 += p0 * q[1] + q0 * p[1];
 		if (n1 == n[1]) {
 			uint32_t old_p0 = p[0], old_q0 = q[0];
-			printf("found p0/q0 match: 0x%08x 0x%08x\n", p0, q0);
-			p[0] = p0; q[0] = q0;
+			uint32_t old_p1 = p[1], old_q1 = q[1];
+			printf("found match: p+0x%x q+0x%x\n", p0 - old_p0, q0 - old_q0);
+			p[0] = p0; p[1] += p0 < old_p0;
+			q[0] = q0; q[1] += q0 < old_q0;
 			bignum_mul(n2, p, 16, q, 16);
 			if (!memcmp(n2, n, sizeof(n))) goto found;
-			p[0] = old_p0; q[0] = old_q0;
+			p[0] = old_p0; p[1] = old_p1;
+			q[0] = old_q0; q[1] = old_q1;
 		}
 	}
 	ERR_EXIT("key not found\n");
