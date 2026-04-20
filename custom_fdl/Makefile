@@ -27,6 +27,7 @@ CFLAGS += -ffunction-sections -fdata-sections
 LFLAGS = -static -nostartfiles -nodefaultlibs -nostdlib -Wl,-T,$(LDSCRIPT) -Wl,--gc-sections -Wl,-z,notext
 CFLAGS += -DCHIP=$(CHIP)
 CFLAGS += -DWITH_SFC=1 -DFDL_DEBUG=0
+CFLAGS += -DWITH_EFUSE=1
 
 # Clang's LTO doesn't work with the GCC toolchain
 ifeq ($(findstring -gcc-toolchain,$(notdir $(CC))),)

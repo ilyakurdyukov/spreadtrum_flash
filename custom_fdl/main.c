@@ -9,6 +9,10 @@
 #define ERASE_BLK 0x1000
 #endif
 
+#if WITH_EFUSE
+#include "efuse.h"
+#endif
+
 #if FDL_DEBUG
 struct _IO_FILE;
 typedef struct _IO_FILE FILE;
@@ -266,6 +270,29 @@ static int erase_flash(uint8_t *pkt) {
 }
 #endif
 
+#if WITH_EFUSE
+static int read_efuse(uint8_t *pkt) {
+	unsigned len = READ16_BE(pkt + 2);
+	unsigned i, n;
+
+	if (len) return BSL_REP_INVALID_CMD;
+
+	pkt = dl_send_buf();
+	WRITE16_BE(pkt, BSL_REP_READ_FLASH);
+
+	efuse_init();
+	n = EFUSE_MAX;
+	for (i = 0; i < n; i++)
+		if (efuse_read(i, (uint32_t*)(pkt + 4) + i))
+			return BSL_REP_OPERATION_FAILED;
+	efuse_off();
+
+	WRITE16_BE(pkt + 2, n * 4);
+	dl_send_packet(pkt);
+	return 0;
+}
+#endif
+
 void dl_main(void) {
 	uint8_t *pkt;
 #if 0
@@ -332,6 +359,12 @@ void dl_main(void) {
 #if WITH_SFC
 		case BSL_CMD_ERASE_FLASH:
 			ret = erase_flash(pkt);
+			break;
+#endif
+
+#if WITH_EFUSE
+		case 0x6566: // "ef"
+			ret = read_efuse(pkt);
 			break;
 #endif
 

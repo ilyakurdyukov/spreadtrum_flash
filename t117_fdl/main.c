@@ -3,6 +3,10 @@
 #include "packet.h"
 #include "channel.h"
 
+#if WITH_EFUSE
+#include "efuse.h"
+#endif
+
 static struct {
 	uintptr_t start;
 	uint32_t size, recv;
@@ -104,6 +108,28 @@ static int read_flash(uint8_t *pkt) {
 	return 0;
 }
 
+#if WITH_EFUSE
+static int read_efuse(uint8_t *pkt) {
+	unsigned len = READ16_BE(pkt + 2);
+	unsigned i, n;
+
+	if (len) return BSL_REP_INVALID_CMD;
+
+	pkt = dl_send_buf();
+	WRITE16_BE(pkt, BSL_REP_READ_FLASH);
+
+	efuse_init();
+	n = EFUSE_MAX;
+	for (i = 0; i < n; i++)
+		((uint32_t*)(pkt + 4))[i] = efuse_read(i, 0);
+	efuse_off();
+
+	WRITE16_BE(pkt + 2, n * 4);
+	dl_send_packet(pkt);
+	return 0;
+}
+#endif
+
 void dl_main(void) {
 	uint8_t *pkt;
 #if 0
@@ -185,6 +211,12 @@ void dl_main(void) {
 		case BSL_CMD_OFF_CHG:
 			ret = BSL_REP_ACK;
 			break;
+
+#if WITH_EFUSE
+		case 0x6566: // "ef"
+			ret = read_efuse(pkt);
+			break;
+#endif
 
 		default:
 			ret = BSL_REP_UNKNOWN_CMD;

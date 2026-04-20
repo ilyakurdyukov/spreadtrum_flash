@@ -1091,6 +1091,55 @@ static void t117_exec_workaround(spdio_t *io, uint32_t addr) {
 	send_msg(io); // no ack
 }
 
+static void dump_efuse(spdio_t *io, uint32_t id, const char *fn) {
+	unsigned n, n2; int ret;
+
+	if (!id) ERR_EXIT("dump_efuse: custom FDL required\n");
+	// SC6530, SC6530C, SC6531
+	if ((id ^ 0x65300000) >> 17 == 0) n = 8;
+	// SC6531E
+	else if ((id ^ 0x65620000) >> 16 == 0) n = 16;
+	// UMS9117
+	else if ((id ^ 0x98180000) >> 16 == 0) n = 64;
+	else ERR_EXIT("dump_efuse: unknown chip\n");
+
+	encode_msg(io, 0x6566, NULL, 0);
+	send_msg(io);
+	ret = recv_msg(io);
+	if ((ret = recv_type(io)) != BSL_REP_READ_FLASH)
+		ERR_EXIT("unexpected response (0x%04x)\n", ret);
+
+	n2 = READ16_BE(io->raw_buf + 2);
+	if (n2 != n * 4)
+		ERR_EXIT("unexpected size (0x%04x)\n", n2);
+
+	if (!strcmp(fn, "-")) {
+		uint32_t *p = (uint32_t*)(io->raw_buf + 4);
+		unsigned i;
+		if (n != 64) printf("efuse data:\n");
+		else {
+			printf("efuse data (double):\n");
+			for (i = 0; i < n / 2; printf("\n")) {
+				printf("0x%02x:", i);
+				do printf(" %08x", READ32_LE(p + i * 2) | READ32_LE(p + i * 2 + 1));
+				while (++i & 3);
+			}
+			printf("efuse data (raw):\n");
+		}
+		for (i = 0; i < n; printf("\n")) {
+			printf("0x%02x:", i);
+			do printf(" %08x", READ32_LE(p + i));
+			while (++i & 3);
+		}
+	} else {
+		FILE *fo = fopen(fn, "wb");
+		if (!fo) ERR_EXIT("fopen(dump) failed\n");
+		if (fwrite(io->raw_buf + 4, 1, n * 4, fo) != n * 4)
+			ERR_EXIT("fwrite(dump) failed\n");
+		fclose(fo);
+	}
+}
+
 static uint64_t str_to_size(const char *str) {
 	char *end; int shl = 0; uint64_t n;
 	if ((unsigned)(*str - '0') >= 10)
@@ -1143,6 +1192,7 @@ int main(int argc, char **argv) {
 	int wait = 300 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
 	int verbose = 0, fdl_loaded = 0;
+	uint32_t chip_id = 0;
 	uint32_t fw_addr = ~0u, ram_addr = ~0u;
 	int keep_charge = 0, end_data = 1, blk_size = 0;
 	int secure_boot = 0;
@@ -1264,6 +1314,7 @@ int main(int argc, char **argv) {
 					print_string(stderr, str, len);
 					if (len && !str[len - 1] && (str = strstr(str, "CHIP ID = 0x"))) {
 						uint32_t id = strtoul(str + 12, NULL, 16);
+						chip_id = id;
 						// SC6530, SC6530C, SC6531
 						if ((id ^ 0x65300000) >> 17 == 0)
 							ram_addr = (fw_addr = 0x30000000) | 0x04000000;
@@ -1447,6 +1498,11 @@ int main(int argc, char **argv) {
 			DBG_LOG("BSL_REP_READ_CHIP_UID: ");
 			print_string(stderr, io->raw_buf + 4, READ16_BE(io->raw_buf + 2));
 			argc -= 1; argv += 1;
+
+		} else if (!strcmp(argv[1], "read_efuse")) {
+			if (argc <= 2) ERR_EXIT("bad command\n");
+			dump_efuse(io, chip_id, argv[2]);
+			argc -= 2; argv += 2;
 
 		} else if (!strcmp(argv[1], "disable_transcode")) {
 			encode_msg(io, BSL_CMD_DISABLE_TRANSCODE, NULL, 0);
