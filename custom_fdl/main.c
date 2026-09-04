@@ -56,7 +56,7 @@ static void sfc_unlock(void) {
 	DBG_LOG("sfc: id = 0x%06x\n", id);
 	id1 = id >> 16;
 	do {
-		unsigned mask, status;
+		unsigned mask, sr1, sr2 = 0;
 		mask = 0xfc;
 		if (id1 == 0xef) goto match; /* Winbond */
 		if (id1 == 0xc8) goto match; /* GigaDevice */
@@ -66,10 +66,22 @@ static void sfc_unlock(void) {
 match:
 		// 4MB (32Mbit) chips use the value 0x38,
 		// which means the first 2MB are locked.
-		status = sfc_read_status(cs);
-		DBG_LOG("sfc: status = 0x%02x\n", status);
-		if (status & mask)
-			sfc_write_status(cs, status & ~mask);
+		sr1 = sfc_read_status(cs);
+		DBG_LOG("sfc: sr1 = 0x%02x\n", sr1);
+		if (mask == 0xfc) {
+			sr2 = sfc_cmd_read(cs, 0x35, 1) >> 24;
+			DBG_LOG("sfc: sr2 = 0x%02x\n", sr2);
+		}
+		if (id1 == 0xc8) { /* GigaDevice */
+			sr1 |= sr2 << 8;
+			if (sr1 & 0x40fc)
+				sfc_cmd_write(cs, 0x01, sr1 & ~0x40fc, 2);
+		} else {
+			if (sr1 & mask)
+				sfc_cmd_write(cs, 0x01, sr1 & ~mask, 1);
+			if (sr2 & 0x40)
+				sfc_cmd_write(cs, 0x31, sr2 & ~0x40, 1);
+		}
 	} while (0);
 	sfc_spiread(cs);
 }

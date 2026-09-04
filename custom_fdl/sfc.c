@@ -30,8 +30,9 @@ uint32_t sfc_cmd_read(int cs, unsigned cmd, unsigned n) {
 	return sfc->cmd[7];
 }
 
-void sfc_write_status(int cs, unsigned val) {
+void sfc_cmd_write(int cs, unsigned cmd, unsigned val, unsigned num) {
 	sfc_base_t *sfc0 = SFC_BASE, *sfc;
+	unsigned tmp;
 	sfc = sfc0 + cs;
 
 	sfc_write_enable(cs);
@@ -39,11 +40,15 @@ void sfc_write_status(int cs, unsigned val) {
 	sfc->tbuf_clr = 1;
 	sfc0->cmd_set &= ~1; // write
 	SFC_CMDSET(sfc, 1, 7);
-	sfc->cmd[0] = 0x01; // Write Status Register
+	sfc->cmd[0] = cmd;
 	sfc->cmd[1] = val;
-	sfc->type_info[0] =
-			SFC_TYPEINFO(1, 1, WRITE, 0) |
+	tmp = SFC_TYPEINFO(1, 1, WRITE, 0) |
 			SFC_TYPEINFO(1, 1, WRITE, 0) << 8;
+	if (num > 1) {
+		sfc->cmd[2] = val >> 8;
+		tmp |= SFC_TYPEINFO(1, 1, WRITE, 0) << 16;
+	}
+	sfc->type_info[0] = tmp;
 	sfc0->int_clr = 1 << cs;
 	sfc0->soft_req |= 1;
 	while (!(sfc->status & 1));

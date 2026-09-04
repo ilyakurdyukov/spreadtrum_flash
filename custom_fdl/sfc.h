@@ -27,7 +27,7 @@ enum {
 void sfc_init(void);
 void sfc_cmdclr(sfc_base_t *sfc);
 uint32_t sfc_cmd_read(int cs, unsigned cmd, unsigned len);
-void sfc_write_status(int cs, unsigned val);
+void sfc_cmd_write(int cs, unsigned cmd, unsigned val, unsigned num);
 void sfc_write_enable(int cs);
 void sfc_erase(int cs, int addr, int cmd, int addr_len);
 void sfc_write(int cs, int addr, const void *buf, unsigned size);
