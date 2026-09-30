@@ -2,9 +2,9 @@
 
 ### Usage
 
-It can't read or write to NAND flash yet.
+It can read raw SPI-NAND flash (2K pages, on-die ECC), but can't write to it yet.
 
-However, it can dump the boot ROM and read RAM, which the original FDLs can't do.
+It can also dump the boot ROM and read RAM, which the original FDLs can't do.
 
 Example of using FDL1:
 ```
@@ -20,6 +20,28 @@ sudo ./spd_dump \
 	fdl t117_fdl2.bin 0x80100000 \
 	read_mem 0xffff0000 0x8000 brom.bin
 ```
+
+NAND reading is tested **only** on Nokia 105 4G 2nd Edition (2024) with Foresee F35UQA001G (128M SPI-NAND, 2K pages), other flash chips may need different settings or may not work at all.
+
+Reading raw NAND flash (FDL1 or FDL2):
+```
+sudo ./spd_dump \
+	fdl t117_fdl1.bin 0x6200 \
+	blk_size 0x800 read_flash 0xf0000000 0 128M nand.bin
+```
+
+Reading raw NAND flash with spare data:
+```
+sudo ./spd_dump \
+	fdl t117_fdl1.bin 0x6200 \
+	blk_size 0x840 read_flash 0xf0000001 0 0x8400000 nand_oob.bin
+```
+
+* `0xf0000000` - raw main area, the offset is `page * 2048`.
+* `0xf0000001` - raw pages with the spare area appended, 2112 bytes per page, the offset is `page * 2112`.
+* `blk_size` of one page (0x800 or 0x840) gives one request per page, any other size up to 0xff7 also works.
+* Each page with an uncorrectable ECC error is reported as a `BSL_REP_LOG` message, the data is still dumped.
+* `read_mem` at these two addresses also reads NAND, not memory.
 
 ### Build
 
