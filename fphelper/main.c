@@ -473,11 +473,14 @@ static int check_keymap(const void *buf, unsigned size) {
 		a = s[i];
 		if (a == 0xffff) { empty++; empty2 += (i & 7) >= 6; continue; }
 		// exception: Vertex M115
-		if (a - 0x70 < 3) continue;
+		// exception: Texet TM-404 (?) (0x74, 0x75)
+		if (a - 0x70 < 6) continue;
 		// exception: BQ3586 (0x69)
 		// exception: Texet TM-122, TM-130, TM-D324 (0x69..0x6d)
 		// exception: meanIT Veteran (0x68)
 		if (a - 0x68 < 6) continue;
+		// exception: MKTEL M2023 (0x3d)
+		if (a == 0x3d) continue;
 		if (a - 1 >= 0x39) break;
 	}
 	// printf("!!! check_keymap: %d, %d, %d\n", i, empty, empty2);
