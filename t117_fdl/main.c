@@ -12,6 +12,20 @@ static struct {
 	uint32_t size, recv;
 } dl_status;
 
+#if WITH_NAND || (!FDL2 && SDRAM_INIT == 2)
+// init RAM on demand
+static int dram_init(void) {
+#if !FDL2 && SDRAM_INIT == 2
+	static int done = 0;
+	if (!done && sdram_init()) return -1;
+	done = 1;
+#elif !FDL2 && SDRAM_INIT == 0
+	return -1;
+#endif
+	return 0;
+}
+#endif
+
 static int data_start(uint8_t *pkt) {
 	unsigned len = READ16_BE(pkt + 2);
 	uint32_t addr = READ32_BE(pkt + 4);
@@ -24,14 +38,9 @@ static int data_start(uint8_t *pkt) {
 	dl_status.size = size;
 	dl_status.recv = 0;
 #if !FDL2 && SDRAM_INIT == 2
-	// init RAM on demand
-	if (addr - 0x80000000 < 64 << 20) {
-		static int done = 0;
-		if (!done && sdram_init()) {
-			dl_send_ack(BSL_REP_OPERATION_FAILED);
-			for (;;);
-		}
-		done = 1;
+	if (addr - 0x80000000 < 64 << 20 && dram_init()) {
+		dl_send_ack(BSL_REP_OPERATION_FAILED);
+		for (;;);
 	}
 #endif
 	return BSL_REP_ACK;
@@ -97,7 +106,30 @@ static int read_flash(uint8_t *pkt) {
 
 	if (len == 12) offs = READ32_BE(pkt + 12);
 	if (offs != ~0u) {
-		// TODO
+#if WITH_NAND
+// 0xf0000000 - NAND main area, 0xf0000001 - NAND pages with spare (2048 + 64)
+#define NAND_ID 0xf0000000
+		if ((addr & ~1u) == NAND_ID) {
+			static char msg[] = { "nand: ECC error, page 0x00000000" };
+			uint8_t *src; uint32_t bad[4], *p, a, i;
+
+			if (dram_init()) return BSL_REP_OPERATION_FAILED;
+			src = nand_read(offs, size, addr & 1, bad);
+			if (!src) return BSL_REP_OPERATION_FAILED;
+
+			// one log message per bad page, before the data
+			for (p = bad; ~(a = *p); p++) {
+				for (i = sizeof(msg) - 2; i >= sizeof(msg) - 9; i--, a >>= 4)
+					msg[i] = "0123456789abcdef"[a & 15];
+				pkt = dl_send_buf();
+				WRITE16_BE(pkt, BSL_REP_LOG);
+				WRITE16_BE(pkt + 2, sizeof(msg) - 1);
+				memcpy(pkt + 4, msg, sizeof(msg) - 1);
+				dl_send_packet(pkt);
+			}
+			addr = (uintptr_t)src;
+		}
+#endif
 	}
 
 	pkt = dl_send_buf();

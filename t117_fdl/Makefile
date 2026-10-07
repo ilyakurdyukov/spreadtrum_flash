@@ -1,7 +1,7 @@
 # 0 - detect
 CHIP = 0
 OBJDIR = obj$(CHIP)
-SRCS = start entry common usbio packet channel main sdram_init
+SRCS = start entry common usbio packet channel main nand sdram_init
 OBJS = $(SRCS:%=$(OBJDIR)/%.o)
 FDL = 1
 LDSCRIPT = ums9117_fdl$(FDL).ld
@@ -25,14 +25,18 @@ CFLAGS += -Wall -Wextra -funsigned-char
 CFLAGS += -fno-PIE -ffreestanding -mcpu=cortex-a7 -mthumb $(EXTRA_CFLAGS) -fno-strict-aliasing
 CFLAGS += -fomit-frame-pointer
 CFLAGS += -ffunction-sections -fdata-sections
+# MMU is off, so unaligned accesses fault (e.g. odd sized packets)
+CFLAGS += -mno-unaligned-access
 LFLAGS = -static -nostartfiles -nodefaultlibs -nostdlib -Wl,-T,$(LDSCRIPT) -Wl,--gc-sections -Wl,-z,notext
 LFLAGS += -mcpu=cortex-a7 # required for GCC + LTO
+LFLAGS += -mno-unaligned-access
 CFLAGS += -DCHIP=$(CHIP)
 ifeq ($(FDL), 2)
 CFLAGS += -DFDL2=1
 endif
 # CFLAGS += -DSDRAM_INIT=0
 CFLAGS += -DWITH_EFUSE=1
+CFLAGS += -DWITH_NAND=1
 
 # Clang's LTO doesn't work with the GCC toolchain
 ifeq ($(findstring -gcc-toolchain,$(notdir $(CC))),)

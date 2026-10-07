@@ -28,6 +28,8 @@ int adi_write(uint32_t addr, uint32_t val);
 #endif
 int sdram_init(void);
 
+uint8_t *nand_read(uint32_t offs, uint32_t size, int oob, uint32_t bad[4]);
+
 #define MEM1(addr) *(volatile uint8_t*)(addr)
 #define MEM2(addr) *(volatile uint16_t*)(addr)
 #define MEM4(addr) *(volatile uint32_t*)(addr)
